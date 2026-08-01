@@ -90,7 +90,16 @@ export function renderSharesScreen({ mount, navigate }) {
           button('Open the folder', {
             class: 'btn btn-primary',
             iconName: 'link',
-            onClick: () => window.open(record.shareUrl, '_blank', 'noopener'),
+            // A plain same-tab navigation, not window.open: on a phone with
+            // this app added to the home screen, a new browsing context has
+            // no back button of its own to return with. The share page
+            // itself carries a link back into the app.
+            onClick: () => { window.location.href = record.shareUrl; },
+          }),
+          button('Download everything (.zip)', {
+            class: 'btn',
+            iconName: 'download',
+            onClick: () => { window.location.href = `${record.shareUrl}/download.zip`; },
           }),
           button('Revoke this link', {
             class: 'btn btn-ghost btn-danger',
@@ -140,11 +149,22 @@ export function openExportSheet(record) {
 
       linkBlock(record.shareUrl),
 
+      button('Download everything (.zip)', {
+        class: 'btn btn-primary btn-block',
+        style: { marginTop: '12px' },
+        iconName: 'download',
+        onClick: () => { window.location.href = `${record.shareUrl}/download.zip`; },
+      }),
+
       el('div', { class: 'section-head' }, el('h2', {}, 'In the folder')),
       ...record.files.map((file) =>
         el(
+          // A plain link with the browser's own download behaviour (no
+          // target="_blank") — the server sends Content-Disposition:
+          // attachment for ?download=true, so this saves the file instead of
+          // opening an in-app PDF preview with no way back to the app.
           'a',
-          { class: 'row', href: file.url, target: '_blank', rel: 'noopener' },
+          { class: 'row', href: `${file.url}?download=true` },
           el('div', { class: 'thumb' }, icon(file.role === 'spec' ? 'info' : 'download')),
           el(
             'div',
@@ -218,7 +238,7 @@ function linkBlock(url) {
       button('Open', {
         class: 'btn btn-sm',
         iconName: 'link',
-        onClick: () => window.open(url, '_blank', 'noopener'),
+        onClick: () => { window.location.href = url; },
       }),
     ),
   );

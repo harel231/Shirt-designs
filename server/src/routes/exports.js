@@ -244,7 +244,7 @@ exportsRouter.delete('/exports/:id', async (req, res, next) => {
   }
 });
 
-export { buildSpec, gatherContext, exportDir, publicBaseUrl };
+export { buildSpec, gatherContext, exportDir, publicBaseUrl, slugify };
 
 function slugify(value) {
   return (

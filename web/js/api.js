@@ -66,6 +66,7 @@ export const api = {
     backgroundColors: (id) => request(`/api/assets/${id}/background-colors`),
     removeBackground: (id, options) => postJson(`/api/assets/${id}/remove-background`, options),
     vectorize: (id, options) => postJson(`/api/assets/${id}/vectorize`, options),
+    recolor: (id, color) => postJson(`/api/assets/${id}/recolor`, { color }),
     createText: (spec) => postJson('/api/assets/text', spec),
     save: (id, name) => postJson(`/api/assets/${id}/save`, { name }),
     rename: (id, name) =>

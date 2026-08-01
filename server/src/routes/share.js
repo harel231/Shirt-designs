@@ -1,9 +1,13 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { Router } from 'express';
 import { db } from '../lib/store.js';
-import { exportDir, publicBaseUrl } from './exports.js';
+import { exportDir, publicBaseUrl, slugify } from './exports.js';
+
+const require = createRequire(import.meta.url);
+const archiver = require('archiver');
 
 /**
  * The shareable folder.
@@ -41,6 +45,35 @@ shareRouter.get('/:token/index.json', (req, res) => {
       url: `${base}/share/${record.token}/files/${file.name}`,
     })),
   });
+});
+
+/**
+ * Everything in the folder as one .zip. This is the one-tap "get it onto my
+ * phone" path: a phone's share sheet naturally offers "Save to Files" for a
+ * single downloaded archive in a way it never quite does for a page full of
+ * separate links.
+ */
+shareRouter.get('/:token/download.zip', async (req, res, next) => {
+  const record = findByToken(req.params.token);
+  if (!record) return res.status(404).json({ error: 'This share link is not valid.' });
+
+  try {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    res.type('application/zip');
+    res.set('Content-Disposition', `attachment; filename="${slugify(record.name)}-print-files.zip"`);
+
+    archive.on('error', next);
+    archive.pipe(res);
+
+    const dir = exportDir(record.id);
+    for (const file of record.files) {
+      archive.file(join(dir, file.name), { name: file.name });
+    }
+
+    await archive.finalize();
+  } catch (err) {
+    next(err);
+  }
 });
 
 shareRouter.get('/:token/files/*name', async (req, res, next) => {
@@ -171,10 +204,13 @@ function folderPage(record, base) {
   @media (prefers-color-scheme: dark) { .warn { background:#2c2404; color:#f0d98a; } }
   .warn ul { margin:6px 0 0; padding-left:18px; }
   footer { margin-top:28px; color:var(--muted); font-size:12.5px; }
+  .back-link { display:inline-flex; align-items:center; gap:6px; color:var(--muted); text-decoration:none; font-size:13px; margin-bottom:14px; }
+  .zip-btn { display:inline-flex; align-items:center; gap:8px; background:var(--accent); color:#fff; text-decoration:none; font-weight:600; padding:11px 18px; border-radius:999px; font-size:14.5px; }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <a class="back-link" href="/">&larr; Back to the studio</a>
   <header>
     <h1>${escapeHtml(record.name)}</h1>
     <p>Print-ready files &middot; prepared ${escapeHtml(formatDate(record.createdAt))}</p>
@@ -187,6 +223,7 @@ function folderPage(record, base) {
       <div><span>Colour</span><strong><i class="swatch" style="background:${escapeHtml(garment.color?.hex ?? '#fff')}"></i>${escapeHtml(garment.color?.name ?? '—')} ${escapeHtml(garment.color?.hex ?? '')}</strong></div>
     </div>
     ${inkRow}
+    <a class="zip-btn" style="margin-top:16px" href="${link}/download.zip">&#8595; Download everything (.zip)</a>
   </div>
 
   ${viewRows ? `<div class="card">${viewRows}</div>` : ''}

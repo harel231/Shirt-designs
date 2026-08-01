@@ -98,6 +98,8 @@ server/                Node + Express print-production service
 web/                   the mobile web app (static ES modules, no build step)
   js/screens/          create · shirts · designs · share · the canvas editor
   test/                25 tests over the coordinate maths
+Dockerfile             single image serving both the API and the static app
+render.yaml            Render blueprint (Docker, free plan, no disk — see below)
 ```
 
 There is no bundler and no build step. The app is plain ES modules served
@@ -133,13 +135,79 @@ Font *files* are fetched from Google the first time a family is actually used
 and cached on disk from then on, so a family you have used before keeps working
 without a connection.
 
-## Sending a link outside your network
+## Deploying for a public URL
 
-Share links are only as reachable as the server. On a home network the address
-works for anyone on the same Wi-Fi. To send one to an outside vendor, expose
-the server through a tunnel and set `PUBLIC_BASE_URL` to the public address so
-generated links point at it:
+This is a normal long-running Node process with a writable local disk — not
+a stateless request handler. **It cannot run on Vercel, Netlify, or any other
+serverless-functions platform**: those give a function a fresh, read-only
+filesystem on every invocation, and this app writes uploads, exports and its
+database to disk on nearly every request. It will crash on the first request
+that tries to write anything (`ensureStorage()` failing to `mkdir` is the
+usual first error).
+
+Use a host that runs a real container with a persistent disk — Render,
+Railway, Fly.io, or your own VPS/Docker host all work. A `Dockerfile` is
+included and builds this repo as-is, with no native build dependencies (every
+server package is pure JS).
+
+### Render free tier (no card, deployable from a phone browser)
+
+The included `render.yaml` targets Render's **free** plan on purpose:
+
+1. Push this repo to GitHub.
+2. On Render's dashboard, **New → Blueprint**, point it at the repo. No CLI,
+   no local machine needed — this works from a phone browser.
+3. It provisions the web service from the `Dockerfile`. No disk is attached,
+   because free web services on Render cannot attach one at all — that is a
+   hard platform rule, not something this blueprint could opt into.
+
+**What that means in practice:** the app itself never crashes — a fresh
+container just re-seeds the shirt catalog and starts with an empty library, the
+same way it does on `npm start` the first time. But a free service spins down
+after about 15 minutes with no traffic, and everything written to disk since
+the last restart — uploaded artwork, custom shirt types, saved designs, past
+exports — is gone when it spins back up. **Export and download anything you
+want to keep** (the mockup PDF, the artwork PDF, the vector sources) before
+you stop using it for a while; those files only really exist once they're on
+your device, not while they're sitting in the app's temporary storage.
+
+This is a real limitation, not a rare edge case — for a personal project used
+in short sessions it will happen most times you come back. If you later want
+the library itself to persist between sessions, the two ways to get that
+without giving any platform a card are non-trivial: move file storage to
+something like Cloudflare R2 and the JSON database to a provider with a real
+permanent free tier, which needs code changes to this app's storage layer,
+not just a config change. Ask if you want that built out.
+
+### If you want it to actually persist: Render's paid plan, or your own host
+
+Render's paid plans support attaching a real persistent disk (see git history
+for a `render.yaml` with a `disk:` block), as does Railway, Fly.io, an Oracle
+Cloud Always Free VM, or your own Docker host.
+
+### Railway / Fly.io / your own host
+
+Same `Dockerfile`, any Docker host:
 
 ```bash
-PUBLIC_BASE_URL=https://your-tunnel.example npm start
+docker build -t shirt-designs .
+docker run -p 4000:4000 -v shirt-designs-data:/data shirt-designs
 ```
+
+Mount a persistent volume at `/data` (or wherever you point `SHIRT_DATA_DIR`)
+on whichever platform you pick — that volume *is* the design library, so
+losing it means losing every saved asset, shirt type and export.
+
+Once deployed, set `PUBLIC_BASE_URL` to the public URL so share links the app
+generates point at it instead of guessing from the request:
+
+```bash
+PUBLIC_BASE_URL=https://your-app.example
+```
+
+### If you already tried Vercel
+
+Delete or disconnect that project — left connected, it will keep redeploying
+and crashing on every push to this branch. Nothing in this repo targets
+Vercel; if a project there is auto-importing from GitHub, that happened on
+Vercel's side, not from anything committed here.

@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { embedPdfPlacements } from './pdfvector.js';
 import { CANVAS, renderGarment } from '../templates/garments.js';
 
 const require = createRequire(import.meta.url);
@@ -81,12 +82,28 @@ function layersFor(design, view) {
 /**
  * Draws one layer at `scale` points per inch, with the layer's own rotation
  * applied about its centre.
+ *
+ * A PDF-vector layer is not drawn here at all — pdfkit has no notion of
+ * embedding one PDF's page into another. Its position is recorded in
+ * `pending` instead (in the same page-space coordinates everything else
+ * uses) and merged in afterward with pdf-lib, which can do that; see
+ * buildMockupPdf/buildArtworkPdf below and pdfvector.js.
  */
-function drawLayer(doc, layer, asset, origin, scale) {
+function drawLayer(doc, layer, asset, origin, scale, pending, pageIndex, clipRect) {
   const x = origin.x + layer.x * scale;
   const y = origin.y + layer.y * scale;
   const width = layer.width * scale;
   const height = layer.height * scale;
+
+  if (asset.format === 'pdf') {
+    pending?.push({
+      pageIndex,
+      sourceBytes: asset.pdfBuffer,
+      box: { x, y, width, height, rotation: layer.rotation ?? 0 },
+      clip: clipRect,
+    });
+    return;
+  }
 
   doc.save();
   if (layer.rotation) {
@@ -113,13 +130,14 @@ function printAreaBox(shirt, view) {
   return shirt.printAreas[view] ?? shirt.printAreas.front;
 }
 
-export function buildMockupPdf(design, ctx) {
+export async function buildMockupPdf(design, ctx) {
   const { shirt, color, resolveAsset, warnings = [] } = ctx;
   const doc = new PDFDocument({ size: [A4.width, A4.height], margin: 0, autoFirstPage: false });
   const chunks = [];
   doc.on('data', (chunk) => chunks.push(chunk));
+  const pending = [];
 
-  for (const view of ['front', 'back']) {
+  for (const [pageIndex, view] of ['front', 'back'].entries()) {
     doc.addPage();
     const area = printAreaBox(shirt, view);
 
@@ -166,14 +184,14 @@ export function buildMockupPdf(design, ctx) {
     const areaWidth = area.width * garmentScale;
     const scale = areaWidth / area.widthIn;
 
-    doc
-      .save()
-      .rect(areaX, areaY, areaWidth, area.height * garmentScale)
-      .clip();
+    const areaHeight = area.height * garmentScale;
+    const clipRect = { x: areaX, y: areaY, width: areaWidth, height: areaHeight };
+
+    doc.save().rect(areaX, areaY, areaWidth, areaHeight).clip();
 
     for (const layer of layersFor(design, view)) {
       const asset = resolveAsset(layer.assetId);
-      if (asset) drawLayer(doc, layer, asset, { x: areaX, y: areaY }, scale);
+      if (asset) drawLayer(doc, layer, asset, { x: areaX, y: areaY }, scale, pending, pageIndex, clipRect);
     }
     doc.restore();
 
@@ -192,7 +210,8 @@ export function buildMockupPdf(design, ctx) {
   }
 
   doc.end();
-  return collect(doc, chunks);
+  const buffer = await collect(doc, chunks);
+  return embedPdfPlacements(buffer, pending);
 }
 
 function header(doc, design, shirt, color, view) {
@@ -248,11 +267,12 @@ function footer(doc, area, view, warnings) {
  * The production file: one page per view that carries artwork, each page sized
  * to the print area itself so the vendor can output at 100% with no scaling.
  */
-export function buildArtworkPdf(design, ctx) {
+export async function buildArtworkPdf(design, ctx) {
   const { shirt, resolveAsset } = ctx;
   const doc = new PDFDocument({ autoFirstPage: false });
   const chunks = [];
   doc.on('data', (chunk) => chunks.push(chunk));
+  const pending = [];
 
   const pages = [];
   for (const view of ['front', 'back']) {
@@ -264,9 +284,13 @@ export function buildArtworkPdf(design, ctx) {
     const height = area.heightIn * PT_PER_INCH;
 
     doc.addPage({ size: [width, height], margin: 0 });
+    // The page's own bounds already crop anything drawn past them — the same
+    // way they would for pdfkit's own drawing — so no separate clip rect is
+    // needed here the way the mockup's print-area guide requires one.
+    const pageIndex = pages.length;
     for (const layer of layers) {
       const asset = resolveAsset(layer.assetId);
-      if (asset) drawLayer(doc, layer, asset, { x: 0, y: 0 }, PT_PER_INCH);
+      if (asset) drawLayer(doc, layer, asset, { x: 0, y: 0 }, PT_PER_INCH, pending, pageIndex);
     }
 
     pages.push({ view, widthIn: area.widthIn, heightIn: area.heightIn, layers: layers.length });
@@ -278,7 +302,9 @@ export function buildArtworkPdf(design, ctx) {
   }
 
   doc.end();
-  return collect(doc, chunks).then((buffer) => ({ buffer, pages }));
+  const rawBuffer = await collect(doc, chunks);
+  const buffer = await embedPdfPlacements(rawBuffer, pending);
+  return { buffer, pages };
 }
 
 function collect(doc, chunks) {
