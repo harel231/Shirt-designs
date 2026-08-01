@@ -210,6 +210,36 @@ describe('print warnings', () => {
     assert.equal(warnings[0].level, 'error');
     assert.match(warnings[0].message, /missing/i);
   });
+
+  it('warns when artwork will be cropped by the imprint edge', () => {
+    const design = designWith({ id: 'l1', assetId: 'a1', x: -1.5, y: 2, width: 8, height: 4 });
+    const warnings = collectWarnings(
+      design,
+      () => ({ id: 'a1', name: 'Wordmark', kind: 'vector' }),
+      shirt.printAreas,
+    );
+
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].level, 'warning');
+    assert.match(warnings[0].message, /hangs 1\.50" outside/);
+  });
+
+  it('ignores hidden layers and artwork that fits', () => {
+    const inside = designWith({ id: 'l1', assetId: 'a1', x: 1, y: 1, width: 8, height: 4 });
+    const resolve = () => ({ id: 'a1', name: 'Wordmark', kind: 'vector' });
+    assert.equal(collectWarnings(inside, resolve, shirt.printAreas).length, 0);
+
+    const hidden = designWith({
+      id: 'l1',
+      assetId: 'a1',
+      x: -9,
+      y: 0,
+      width: 8,
+      height: 4,
+      visible: false,
+    });
+    assert.equal(collectWarnings(hidden, resolve, shirt.printAreas).length, 0);
+  });
 });
 
 describe('pdf output', () => {
@@ -464,5 +494,87 @@ describe('http api', () => {
     const { status, body } = await get('/api/nope');
     assert.equal(status, 404);
     assert.match(body.error, /No route/);
+  });
+});
+
+describe('garment photo normalisation', () => {
+  it('letterboxes any aspect ratio onto the shared canvas', async () => {
+    const { letterbox } = await import('../src/lib/image.js');
+    const wide = testImage({ width: 400, height: 100 });
+    const framed = letterbox(wide, { width: 1000, height: 1250 });
+
+    assert.equal(framed.width, 1000);
+    assert.equal(framed.height, 1250);
+
+    // The photo is centred, so the top band is untouched (transparent).
+    assert.equal(framed.data[3], 0);
+    // ...and the middle row carries the image.
+    const middle = (625 * 1000 + 500) * 4;
+    assert.equal(framed.data[middle + 3], 255);
+  });
+
+  it('preserves the source aspect ratio inside the frame', async () => {
+    const { alphaBounds, letterbox } = await import('../src/lib/image.js');
+    const framed = letterbox(testImage({ width: 400, height: 100 }), { width: 1000, height: 1250 });
+    const bounds = alphaBounds(framed);
+
+    assert.ok(Math.abs(bounds.width / bounds.height - 4) < 0.05, 'aspect ratio drifted');
+    assert.equal(bounds.x, 0, 'a 4:1 photo should span the full canvas width');
+  });
+});
+
+describe('resampling', () => {
+  it('shrinks and grows to exact dimensions', async () => {
+    const { resize } = await import('../src/lib/image.js');
+    const source = testImage({ width: 120, height: 100 });
+
+    const smaller = resize(source, 60, 50);
+    assert.equal(smaller.width, 60);
+    assert.equal(smaller.height, 50);
+
+    const larger = resize(source, 360, 300);
+    assert.equal(larger.width, 360);
+    assert.equal(larger.height, 300);
+    // Enlarging must not wash the subject colour away.
+    const middle = (150 * 360 + 180) * 4;
+    assert.ok(larger.data[middle] > 180 && larger.data[middle + 1] < 60);
+  });
+
+  it('returns the source untouched when nothing changes', async () => {
+    const { resize } = await import('../src/lib/image.js');
+    const source = testImage();
+    assert.equal(resize(source, source.width, source.height), source);
+  });
+});
+
+describe('editor payload', () => {
+  let server;
+  let base;
+
+  before(async () => {
+    server = createApp().listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  after(() => server?.close());
+
+  it('gives the editor colourway image URLs and the canvas size', async () => {
+    const shirts = await (await fetch(`${base}/api/shirts`)).json();
+    const shirt = shirts.items[0];
+
+    const created = await (
+      await fetch(`${base}/api/designs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Payload check', shirtTypeId: shirt.id }),
+      })
+    ).json();
+
+    const design = await (await fetch(`${base}/api/designs/${created.id}`)).json();
+
+    // Without these the canvas cannot draw a photo-backed garment at all.
+    assert.ok(design.shirt.canvas.width > 0);
+    assert.ok(design.shirt.colorways.every((colorway) => colorway.frontUrl));
   });
 });

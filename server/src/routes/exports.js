@@ -67,7 +67,7 @@ async function gatherContext(design) {
     colorway,
     assets,
     resolveAsset,
-    warnings: collectWarnings(design, resolveAsset),
+    warnings: collectWarnings(design, resolveAsset, shirt.printAreas),
   };
 }
 

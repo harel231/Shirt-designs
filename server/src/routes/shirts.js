@@ -2,7 +2,7 @@ import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Router } from 'express';
 import multer from 'multer';
-import { decode, encodePng, fit } from '../lib/image.js';
+import { decode, encodePng, letterbox } from '../lib/image.js';
 import { newId } from '../lib/ids.js';
 import { SHIRTS_DIR } from '../lib/paths.js';
 import { db } from '../lib/store.js';
@@ -25,7 +25,7 @@ const upload = multer({
 
 export const shirtsRouter = Router();
 
-function publicShirt(shirt) {
+export function publicShirt(shirt) {
   return {
     ...shirt,
     canvas: CANVAS,
@@ -273,9 +273,10 @@ shirtsRouter.delete('/:id', async (req, res, next) => {
 });
 
 async function storeShirtImage(shirtId, colorwayId, view, buffer) {
-  // Normalise every garment photo to the canvas aspect so print areas defined
-  // in canvas coordinates land in the same place regardless of the source.
-  const image = fit(decode(buffer), Math.max(CANVAS.width, CANVAS.height));
+  // Every garment photo is letterboxed onto the shared canvas so print areas,
+  // which are stored in canvas coordinates, land in the same place whatever
+  // aspect ratio the phone's camera produced.
+  const image = letterbox(decode(buffer), CANVAS);
   const file = `${shirtId}-${colorwayId}-${view}.png`;
   await writeFile(join(SHIRTS_DIR, file), encodePng(image));
   return file;

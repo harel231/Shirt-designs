@@ -96,6 +96,79 @@ export function fit(image, maxEdge) {
   return { width, height, data };
 }
 
+/**
+ * Resamples to exact dimensions in either direction: the box filter in `fit`
+ * for shrinking, bilinear for enlarging. `fit` alone cannot do this — it
+ * returns the source untouched when asked to grow.
+ */
+export function resize(image, width, height) {
+  if (width === image.width && height === image.height) return image;
+
+  // An aspect-preserving shrink goes through the box filter, which averages
+  // every source pixel instead of sampling four of them and aliasing.
+  const keepsAspect = Math.abs(width / height - image.width / image.height) < 0.01;
+  if (keepsAspect && width <= image.width) return fit(image, Math.max(width, height));
+
+  const data = new Uint8ClampedArray(width * height * 4);
+  const xRatio = image.width / width;
+  const yRatio = image.height / height;
+
+  for (let y = 0; y < height; y += 1) {
+    const sy = Math.min(image.height - 1, (y + 0.5) * yRatio - 0.5);
+    const y0 = Math.max(0, Math.floor(sy));
+    const y1 = Math.min(image.height - 1, y0 + 1);
+    const wy = sy - y0;
+
+    for (let x = 0; x < width; x += 1) {
+      const sx = Math.min(image.width - 1, (x + 0.5) * xRatio - 0.5);
+      const x0 = Math.max(0, Math.floor(sx));
+      const x1 = Math.min(image.width - 1, x0 + 1);
+      const wx = sx - x0;
+
+      const o = (y * width + x) * 4;
+      for (let c = 0; c < 4; c += 1) {
+        const top =
+          image.data[(y0 * image.width + x0) * 4 + c] * (1 - wx) +
+          image.data[(y0 * image.width + x1) * 4 + c] * wx;
+        const bottom =
+          image.data[(y1 * image.width + x0) * 4 + c] * (1 - wx) +
+          image.data[(y1 * image.width + x1) * 4 + c] * wx;
+        data[o + c] = top * (1 - wy) + bottom * wy;
+      }
+    }
+  }
+
+  return { width, height, data };
+}
+
+/**
+ * Scales an image to fit a fixed frame and centres it on a transparent canvas.
+ *
+ * Garment photographs go through this so every shirt — generated or
+ * photographed — occupies the same coordinate space. Print areas are stored in
+ * that space, so without it the imprint guide would drift on any photo that
+ * was not already the canvas aspect ratio.
+ */
+export function letterbox(image, frame) {
+  const scale = Math.min(frame.width / image.width, frame.height / image.height);
+  const scaled = resize(
+    image,
+    Math.max(1, Math.round(image.width * scale)),
+    Math.max(1, Math.round(image.height * scale)),
+  );
+
+  const data = new Uint8ClampedArray(frame.width * frame.height * 4);
+  const offsetX = Math.round((frame.width - scaled.width) / 2);
+  const offsetY = Math.round((frame.height - scaled.height) / 2);
+
+  for (let y = 0; y < scaled.height; y += 1) {
+    const target = ((y + offsetY) * frame.width + offsetX) * 4;
+    data.set(scaled.data.subarray(y * scaled.width * 4, (y + 1) * scaled.width * 4), target);
+  }
+
+  return { width: frame.width, height: frame.height, data };
+}
+
 /** Tightest rectangle containing pixels above `alphaThreshold`, or null. */
 export function alphaBounds({ width, height, data }, alphaThreshold = 8) {
   let minX = width;

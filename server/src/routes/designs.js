@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { newId } from '../lib/ids.js';
 import { db } from '../lib/store.js';
 import { normalizeHex } from '../lib/text.js';
+import { publicShirt } from './shirts.js';
 
 /**
  * Saved shirt designs.
@@ -78,8 +79,10 @@ designsRouter.get('/:id', (req, res) => {
   const design = db.find('designs', req.params.id);
   if (!design) return res.status(404).json({ error: 'No such design.' });
 
+  // The editor needs the public shape — colourway image URLs and the canvas
+  // size live there, not on the stored row.
   const shirt = db.find('shirtTypes', design.shirtTypeId);
-  res.json({ ...design, shirt: shirt ?? null });
+  res.json({ ...design, shirt: shirt ? publicShirt(shirt) : null });
 });
 
 designsRouter.post('/', (req, res) => {

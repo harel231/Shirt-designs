@@ -2,20 +2,16 @@
   "name": "shirt-designs",
   "version": "1.0.0",
   "private": true,
-  "description": "All-in-one t-shirt design studio: native mobile app plus print production service",
+  "description": "All-in-one t-shirt design studio: mobile web app plus print production service",
   "workspaces": [
-    "server",
-    "app"
+    "server"
   ],
   "scripts": {
-    "server": "npm run start --workspace server",
-    "server:dev": "npm run dev --workspace server",
-    "server:test": "npm run test --workspace server",
-    "app": "npm run start --workspace app",
-    "android": "npm run android --workspace app",
-    "ios": "npm run ios --workspace app",
-    "typecheck": "npm run typecheck --workspace app",
-    "test": "npm run test --workspace server"
+    "start": "npm run start --workspace @shirt-designs/server",
+    "dev": "npm run dev --workspace @shirt-designs/server",
+    "test": "npm run test --workspace @shirt-designs/server && node --test web/test/*.test.mjs",
+    "fonts:sync": "npm run fonts:sync --workspace @shirt-designs/server",
+    "test:web": "node --test web/test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

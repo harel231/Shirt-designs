@@ -22,16 +22,40 @@ const MIN_PRINT_DPI = 150;
  *    filmed or sent to the DTG RIP.
  */
 
-export function collectWarnings(design, resolve) {
+export function collectWarnings(design, resolve, printAreas) {
   const warnings = [];
 
   for (const view of ['front', 'back']) {
+    const area = printAreas?.[view];
+
     for (const layer of design.views[view]?.layers ?? []) {
+      if (layer.visible === false) continue;
+
       const asset = resolve(layer.assetId);
       if (!asset) {
         warnings.push({ view, layer: layer.id, level: 'error', message: 'Artwork is missing from the library.' });
         continue;
       }
+
+      // Anything past the imprint edge gets clipped on press, so say so before
+      // the files leave rather than after the first misprint.
+      if (area) {
+        const overhang = Math.max(
+          -layer.x,
+          -layer.y,
+          layer.x + layer.width - area.widthIn,
+          layer.y + layer.height - area.heightIn,
+        );
+        if (overhang > 0.01) {
+          warnings.push({
+            view,
+            layer: layer.id,
+            level: 'warning',
+            message: `"${asset.name}" hangs ${overhang.toFixed(2)}" outside the ${area.widthIn}" × ${area.heightIn}" print area and will be cropped.`,
+          });
+        }
+      }
+
       if (asset.kind !== 'raster') continue;
 
       // Effective resolution once the bitmap is blown up to its printed size.
@@ -126,9 +150,12 @@ export function buildMockupPdf(design, ctx) {
     } else {
       const photo = color.views?.[view];
       if (photo) {
+        // Photos are stored letterboxed onto the same canvas, so they can be
+        // drawn to the exact garment box — `fit` would re-centre them and pull
+        // the print-area guide out of alignment.
         doc.image(photo, garmentX, garmentY, {
-          fit: [garmentWidth, CANVAS.height * garmentScale],
-          align: 'center',
+          width: garmentWidth,
+          height: CANVAS.height * garmentScale,
         });
       }
     }
