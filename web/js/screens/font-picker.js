@@ -11,7 +11,24 @@ import { el, icon, sheet } from '../ui.js';
 
 const PAGE_SIZE = 24;
 
-export function openFontPicker({ current, sampleText = 'Handgloves' } = {}) {
+/**
+ * Scripts worth filtering by. Most of the catalog is Latin-only, so setting
+ * Hebrew type means wading through 1,800 families that cannot draw a single
+ * letter of it — unless you can ask for the 61 that can.
+ */
+const SCRIPTS = [
+  { name: '', label: 'Any script' },
+  { name: 'hebrew', label: 'Hebrew' },
+  { name: 'arabic', label: 'Arabic' },
+  { name: 'cyrillic', label: 'Cyrillic' },
+  { name: 'greek', label: 'Greek' },
+];
+
+function scriptLabel(name) {
+  return SCRIPTS.find((entry) => entry.name === name)?.label ?? name;
+}
+
+export function openFontPicker({ current, sampleText = 'Handgloves', subset = '' } = {}) {
   return sheet({
     title: 'Choose a font',
     render: (close) => {
@@ -21,6 +38,7 @@ export function openFontPicker({ current, sampleText = 'Handgloves' } = {}) {
 
       let query = '';
       let category = '';
+      let script = subset;
       let offset = 0;
       let total = 0;
       let token = 0;
@@ -52,7 +70,13 @@ export function openFontPicker({ current, sampleText = 'Handgloves' } = {}) {
         status.textContent = 'Searching…';
 
         try {
-          const page = await api.fonts.search({ q: query, category, limit: PAGE_SIZE, offset });
+          const page = await api.fonts.search({
+            q: query,
+            category,
+            subset: script,
+            limit: PAGE_SIZE,
+            offset,
+          });
           if (run !== token) return;
 
           total = page.total;
@@ -77,7 +101,12 @@ export function openFontPicker({ current, sampleText = 'Handgloves' } = {}) {
           offset += page.items.length;
           more.hidden = offset >= total;
           status.hidden = total > 0;
-          status.textContent = total === 0 ? 'No families match that search.' : '';
+          status.textContent =
+            total === 0
+              ? script
+                ? `No ${scriptLabel(script)} families match that search.`
+                : 'No families match that search.'
+              : '';
         } catch (err) {
           if (run !== token) return;
           status.hidden = false;
@@ -90,6 +119,7 @@ export function openFontPicker({ current, sampleText = 'Handgloves' } = {}) {
       const search = el('input', {
         type: 'text',
         placeholder: 'Search 1,900+ families',
+        dir: 'auto',
         onInput: (event) => {
           query = event.target.value.trim();
           clearTimeout(search.timer);
@@ -97,41 +127,57 @@ export function openFontPicker({ current, sampleText = 'Handgloves' } = {}) {
         },
       });
 
-      const chips = el('div', { class: 'chips' });
-      const categories = [
-        { name: '', label: 'All' },
-        { name: 'sans-serif', label: 'Sans' },
-        { name: 'serif', label: 'Serif' },
-        { name: 'display', label: 'Display' },
-        { name: 'handwriting', label: 'Script' },
-        { name: 'monospace', label: 'Mono' },
-      ];
-
-      for (const entry of categories) {
-        chips.append(
-          el(
-            'button',
-            {
-              type: 'button',
-              class: 'chip',
-              'aria-pressed': String(entry.name === category),
-              onClick: (event) => {
-                category = entry.name;
-                for (const chip of chips.children) chip.setAttribute('aria-pressed', 'false');
-                event.currentTarget.setAttribute('aria-pressed', 'true');
-                load({ reset: true });
+      /** One row of mutually exclusive filter chips. */
+      function chipRow(entries, active, onPick) {
+        const row = el('div', { class: 'chips' });
+        for (const entry of entries) {
+          row.append(
+            el(
+              'button',
+              {
+                type: 'button',
+                class: 'chip',
+                'aria-pressed': String(entry.name === active),
+                onClick: (event) => {
+                  for (const chip of row.children) chip.setAttribute('aria-pressed', 'false');
+                  event.currentTarget.setAttribute('aria-pressed', 'true');
+                  onPick(entry.name);
+                  load({ reset: true });
+                },
               },
-            },
-            entry.label,
-          ),
-        );
+              entry.label,
+            ),
+          );
+        }
+        return row;
       }
+
+      const categories = chipRow(
+        [
+          { name: '', label: 'All' },
+          { name: 'sans-serif', label: 'Sans' },
+          { name: 'serif', label: 'Serif' },
+          { name: 'display', label: 'Display' },
+          { name: 'handwriting', label: 'Script' },
+          { name: 'monospace', label: 'Mono' },
+        ],
+        category,
+        (value) => {
+          category = value;
+        },
+      );
+
+      const scripts = chipRow(SCRIPTS, script, (value) => {
+        script = value;
+      });
 
       load({ reset: true });
 
       return [
         el('label', { class: 'field' }, search),
-        chips,
+        categories,
+        el('div', { style: { height: '8px' } }),
+        scripts,
         el('div', { style: { marginTop: '12px' } }, results),
         status,
         more,

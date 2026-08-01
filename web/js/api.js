@@ -78,6 +78,8 @@ export const api = {
     remove: (id, force = false) =>
       request(`/api/assets/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
     fileUrl: (id) => `/api/assets/${id}/file`,
+    // The untouched upload, which only PDF artwork has. See asset-image.js.
+    sourceUrl: (id) => `/api/assets/${id}/source`,
   },
 
   shirts: {
@@ -120,10 +122,13 @@ export const api = {
   },
 
   fonts: {
-    search: ({ q = '', category = '', limit = 40, offset = 0 } = {}) => {
+    search: ({ q = '', category = '', subset = '', limit = 40, offset = 0 } = {}) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
       if (q) params.set('q', q);
       if (category) params.set('category', category);
+      // A subset is a script: "hebrew" narrows this to families that can
+      // actually draw Hebrew, rather than families that merely look nice.
+      if (subset) params.set('subset', subset);
       return request(`/api/fonts?${params}`);
     },
     categories: () => request('/api/fonts/categories'),

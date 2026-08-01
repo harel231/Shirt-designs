@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { assetImg } from '../asset-image.js';
 import {
   clampLayer,
   effectiveDpi,
@@ -324,7 +325,7 @@ export async function renderEditor({ mount, params, navigate }) {
         node.dataset.assetId = layer.assetId;
         setChildren(node,
           asset
-            ? el('img', { src: api.assets.fileUrl(layer.assetId), alt: asset.name, draggable: false })
+            ? assetImg(asset, { alt: asset.name, draggable: false })
             : el('div', { class: 'note' }, 'Missing artwork'),
         );
       }
@@ -734,7 +735,7 @@ export async function renderEditor({ mount, params, navigate }) {
               el(
                 'div',
                 { class: 'tile-art checker' },
-                el('img', { src: api.assets.fileUrl(asset.id), alt: '', loading: 'lazy' }),
+                assetImg(asset, { alt: '', loading: 'lazy' }),
               ),
               el('div', { class: 'tile-label' }, el('strong', { class: 'truncate' }, asset.name)),
             ),
@@ -851,7 +852,7 @@ export async function renderEditor({ mount, params, navigate }) {
               el(
                 'div',
                 { class: 'thumb checker' },
-                asset ? el('img', { src: api.assets.fileUrl(asset.id), alt: '' }) : icon('warn'),
+                asset ? assetImg(asset, { alt: '' }) : icon('warn'),
               ),
               el(
                 'div',

@@ -1,3 +1,4 @@
+import { needsShaping, normalizeDirection, resolveDirection, scriptHint, toVisualLine } from './bidi.js';
 import { loadFont } from './fonts.js';
 
 /**
@@ -7,6 +8,9 @@ import { loadFont } from './fonts.js';
  * live text. That is what a print vendor expects: outlined type needs no font
  * licence at the printer, cannot reflow or substitute, and RIPs identically on
  * every machine.
+ *
+ * Right-to-left text is reordered into visual order first (see bidi.js), so
+ * everything below only ever deals with a line that runs left to right.
  */
 
 const DEFAULTS = {
@@ -16,6 +20,7 @@ const DEFAULTS = {
   align: 'center',
   color: '#111111',
   arc: 0,
+  direction: 'auto',
 };
 
 export async function textToVector(input) {
@@ -38,7 +43,14 @@ export async function textToVector(input) {
   const align = ['left', 'center', 'right'].includes(options.align) ? options.align : 'center';
   const color = normalizeHex(options.color) ?? DEFAULTS.color;
 
-  const lines = text.split('\n').map((line) => measureLine(font, line, scale, size, letterSpacing));
+  // One direction for the whole block, not per line: a Hebrew paragraph should
+  // not flip because a single line happens to start with a Latin word.
+  const directionPreference = normalizeDirection(options.direction);
+  const direction = resolveDirection(text, directionPreference);
+
+  const lines = text
+    .split('\n')
+    .map((line) => measureLine(font, toVisualLine(line, direction), scale, size, letterSpacing));
   const blockWidth = Math.max(1, ...lines.map((line) => line.width));
 
   const ascent = font.ascender * scale;
@@ -78,6 +90,14 @@ export async function textToVector(input) {
     font: { family, weight, italic, size },
     lineCount: lines.length,
     glyphCount: lines.reduce((sum, line) => sum + line.glyphs.length, 0),
+    direction,
+    directionPreference,
+    // What the family could not draw, and what would fix it: a Hebrew word set
+    // in a Latin-only family outlines as a row of blanks, and the only honest
+    // moment to say so is before it reaches a shirt.
+    missingGlyphs: lines.reduce((sum, line) => sum + line.missing, 0),
+    scriptHint: scriptHint(text),
+    unshaped: needsShaping(text),
   };
 }
 
@@ -85,9 +105,25 @@ function measureLine(font, line, scale, size, letterSpacing) {
   const glyphs = font.stringToGlyphs(line);
   const placed = [];
   let x = 0;
+  let baseX = 0;
+  let missing = 0;
 
   glyphs.forEach((glyph, index) => {
-    const advance = glyph.advanceWidth * scale;
+    // Glyph 0 is .notdef — the family has no shape for that character.
+    if (glyph.index === 0) missing += 1;
+
+    const advance = (glyph.advanceWidth ?? 0) * scale;
+
+    // A combining mark — Hebrew nikud, say — carries no advance of its own: it
+    // belongs over the character it follows rather than after it. Without GPOS
+    // this is only roughly where the font would place it, but roughly right
+    // beats a mark stranded a letter to the right.
+    if (advance === 0 && index > 0) {
+      placed.push({ glyph, x: baseX, advance: 0 });
+      return;
+    }
+
+    baseX = x;
     placed.push({ glyph, x, advance });
     x += advance + letterSpacing;
     const next = glyphs[index + 1];
@@ -98,7 +134,7 @@ function measureLine(font, line, scale, size, letterSpacing) {
 
   // The trailing letter-spacing slot is not part of the visible line.
   const width = Math.max(0, x - (glyphs.length ? letterSpacing : 0));
-  return { glyphs: placed, width, size };
+  return { glyphs: placed, width, size, missing };
 }
 
 function placeStraight(commands, line, offsetX, baseline) {

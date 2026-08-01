@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { assetImg } from '../asset-image.js';
 import { store } from '../store.js';
 import {
   button,
@@ -55,9 +56,7 @@ export function openImageTool(startingAsset) {
       const body = el('div');
 
       function paint() {
-        setChildren(preview,
-          el('img', { src: `${api.assets.fileUrl(current.id)}?v=${current.id}`, alt: current.name }),
-        );
+        setChildren(preview, assetImg(current, { alt: current.name }));
 
         const kind = current.kind === 'vector' ? 'Vector' : 'Bitmap';
         const detail =

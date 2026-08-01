@@ -901,6 +901,37 @@ describe('pdf vector artwork — http api', () => {
     assert.equal(asset.file, undefined);
   });
 
+  it('serves the untouched original so the app can render a real preview of it', async () => {
+    const asset = await uploadPdf('emblem.pdf');
+    assert.equal(asset.sourceUrl, `/api/assets/${asset.id}/source`);
+
+    const res = await fetch(`${base}${asset.sourceUrl}`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /application\/pdf/);
+
+    const bytes = Buffer.from(await res.arrayBuffer());
+    assert.deepEqual(bytes, await testPdf(), 'the original must be served byte for byte');
+  });
+
+  it('has no original to serve for artwork that was never a PDF', async () => {
+    const png = encodePng(testImage());
+    const form = new FormData();
+    form.append('image', new Blob([png], { type: 'image/png' }), 'raster.png');
+    const asset = await (await fetch(`${base}/api/assets/upload`, { method: 'POST', body: form })).json();
+
+    assert.equal(asset.sourceUrl, null);
+    assert.equal((await fetch(`${base}/api/assets/${asset.id}/source`)).status, 404);
+  });
+
+  it('serves pdf.js to the browser, since the device does the rendering', async () => {
+    const lib = await fetch(`${base}/vendor/pdfjs/legacy/build/pdf.min.mjs`);
+    assert.equal(lib.status, 200);
+    assert.match(lib.headers.get('content-type'), /javascript/);
+
+    const worker = await fetch(`${base}/vendor/pdfjs/legacy/build/pdf.worker.min.mjs`);
+    assert.equal(worker.status, 200);
+  });
+
   it('will not vectorize or remove the background of a PDF asset', async () => {
     const asset = await uploadPdf();
 
@@ -966,6 +997,36 @@ describe('pdf vector artwork — http api', () => {
     const mockupFile = exported.files.find((file) => file.role === 'mockup');
     const mockupPdf = Buffer.from(await (await fetch(mockupFile.url)).arrayBuffer());
     assert.equal(mockupPdf.subarray(0, 5).toString('ascii'), '%PDF-');
+  });
+
+  it('hands the printer the original PDF as the vector source, never the placeholder', async () => {
+    const asset = await uploadPdf('emblem.pdf');
+    const shirts = await (await fetch(`${base}/api/shirts`)).json();
+    const shirt = shirts.items[0];
+
+    const design = await (
+      await fetch(`${base}/api/designs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Vector source test',
+          shirtTypeId: shirt.id,
+          views: { front: { layers: [{ assetId: asset.id, x: 1, y: 1, width: 4, height: 2.4 }] } },
+        }),
+      })
+    ).json();
+
+    const exported = await (
+      await fetch(`${base}/api/designs/${design.id}/export`, { method: 'POST' })
+    ).json();
+
+    const source = exported.files.find((file) => file.role === 'vector-source');
+    assert.ok(source, 'expected the export to publish a vector source');
+    assert.match(source.name, /\.pdf$/);
+    assert.equal(source.type, 'application/pdf');
+
+    const bytes = Buffer.from(await (await fetch(source.url)).arrayBuffer());
+    assert.deepEqual(bytes, await testPdf(), 'the print shop must get the artwork, not the stand-in');
   });
 
   it('deletes both the placeholder and the original PDF source file from disk', async () => {

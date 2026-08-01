@@ -17,12 +17,13 @@ const {
  * genuine original vector page — not a rasterised preview of it — so a
  * complex logo prints exactly as sharp as the source, at any size.
  *
- * The design canvas itself shows a plain placeholder for this artwork (see
- * placeholderSvg below) rather than a faithful render of the PDF's content:
- * there is no pure-JS, native-dependency-free way to rasterise arbitrary PDF
- * vector content in this stack. Print fidelity comes from embedding the real
- * page at export time; the placeholder is only ever a stand-in for placement
- * on screen.
+ * The server cannot draw the artwork itself: there is no pure-JS,
+ * native-dependency-free way to rasterise arbitrary PDF vector content in this
+ * stack. So it stores a placeholder (see placeholderSvg below) as the asset's
+ * image, and serves the original file alongside it — the app renders that with
+ * pdf.js on the device, where a canvas actually exists, and only falls back to
+ * the placeholder if that fails. Print fidelity is independent of both: the
+ * real page is embedded at export time.
  */
 
 export function isPdf(buffer) {

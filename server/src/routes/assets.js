@@ -37,6 +37,9 @@ function publicAsset(asset) {
     ...rest,
     url: `/api/assets/${asset.id}/file`,
     thumbnailUrl: `/api/assets/${asset.id}/file`,
+    // Only PDF-vector artwork keeps an original the app needs in its own
+    // right: the browser renders that file itself to preview it.
+    sourceUrl: sourceFile ? `/api/assets/${asset.id}/source` : null,
   };
 }
 
@@ -108,6 +111,27 @@ assetsRouter.get('/:id/file', async (req, res, next) => {
   }
 });
 
+/**
+ * The untouched original of a PDF-vector asset. The app fetches this to draw
+ * a real preview of the artwork on the device, since `/file` can only ever
+ * serve the placeholder standing in for it.
+ */
+assetsRouter.get('/:id/source', async (req, res, next) => {
+  const asset = db.find('assets', req.params.id);
+  if (!asset) return res.status(404).json({ error: 'No such asset.' });
+  if (!asset.sourceFile) {
+    return res.status(404).json({ error: 'This artwork has no separate original file.' });
+  }
+  try {
+    const bytes = await readFile(pdfSourcePath(asset));
+    res.type('application/pdf');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(bytes);
+  } catch (err) {
+    next(err);
+  }
+});
+
 assetsRouter.post('/upload', upload.single('image'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Attach an image as the "image" field.' });
@@ -143,10 +167,10 @@ assetsRouter.post('/upload', upload.single('image'), async (req, res, next) => {
 
 /**
  * A PDF upload is treated as ready-made vector art — there is nothing to trim
- * a background from or trace, it is already the print-ready source. Only a
- * placeholder is shown on the canvas (see pdfvector.js for why); the original
- * file is kept untouched on disk and embedded directly into the production
- * PDF at export time.
+ * a background from or trace, it is already the print-ready source. The
+ * original file is kept untouched on disk: the app renders it for preview (see
+ * pdfvector.js for why it is served separately) and it is embedded directly
+ * into the production PDF at export time.
  */
 async function insertPdfAsset(req) {
   const { width, height } = await readPdfPageSize(req.file.buffer);
@@ -360,6 +384,9 @@ assetsRouter.post('/text', async (req, res, next) => {
         lineHeight: numberOr(req.body.lineHeight, 1.2),
         align: req.body.align ?? 'center',
         arc: numberOr(req.body.arc, 0),
+        // The choice, not the outcome: text edited from Hebrew to English
+        // should go back to reading its own direction.
+        direction: result.directionPreference,
         color: result.color,
       },
       saved: req.body.save === true,
