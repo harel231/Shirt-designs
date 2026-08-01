@@ -7,8 +7,13 @@
  * into a different layout, so there is only ever one design to reason about.
  */
 
+/*
+ * Light unless the studio is told otherwise — artwork is judged against white
+ * far more often than against black, so a phone in dark mode does not get to
+ * decide how a design reads. Dark is offered as a setting instead: see
+ * web/js/theme.js, which stamps data-theme on <html> before the first paint.
+ */
 :root {
-  /* White by default, regardless of device theme — see the dark override below. */
   --bg: #f4f5f8;
   --surface: #ffffff;
   --surface-2: #f0f1f5;
@@ -30,22 +35,20 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e0f13;
-    --surface: #171922;
-    --surface-2: #1f2230;
-    --surface-3: #282c3c;
-    --line: #2c3040;
-    --ink: #f1f2f6;
-    --muted: #9aa0b0;
-    --faint: #6b7185;
-    --accent: #5b8cff;
-    --danger: #ff6b6b;
-    --warn: #f5c451;
-    --ok: #4ec9a0;
-    color-scheme: dark;
-  }
+:root[data-theme='dark'] {
+  --bg: #0e0f13;
+  --surface: #171922;
+  --surface-2: #1f2230;
+  --surface-3: #282c3c;
+  --line: #2c3040;
+  --ink: #f1f2f6;
+  --muted: #9aa0b0;
+  --faint: #6b7185;
+  --accent: #5b8cff;
+  --danger: #ff6b6b;
+  --warn: #f5c451;
+  --ok: #4ec9a0;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -87,6 +90,7 @@ a { color: var(--accent); }
 }
 
 .screen-head { margin-bottom: 18px; }
+.screen-head .head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .screen-head h1 { margin: 0; font-size: 27px; letter-spacing: -0.02em; }
 .screen-head p { margin: 5px 0 0; color: var(--muted); font-size: 14px; }
 

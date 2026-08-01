@@ -1,4 +1,5 @@
 import { store } from './store.js';
+import { initTheme } from './theme.js';
 import { clear, el, icon, toast } from './ui.js';
 import { renderCreateScreen } from './screens/create.js';
 import { renderShirtsScreen } from './screens/shirts.js';
@@ -106,6 +107,9 @@ async function renderRoute() {
 }
 
 async function boot() {
+  // Before anything renders: index.html already applied the stored choice, this
+  // takes over the setting and starts following the device if that is the pick.
+  initTheme();
   buildTabBar();
 
   try {

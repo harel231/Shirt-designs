@@ -35,6 +35,10 @@ Text is converted to **vector outlines**, never live text. That is what a print
 vendor wants: outlined type needs no font licence at the printer, cannot reflow
 or substitute, and rips identically on every machine.
 
+The studio opens **light** whatever the phone is set to — artwork is judged
+against white far more often than against black. Dark and *match device* are
+there under Appearance, on the Create screen.
+
 ### 2. T-Shirt Design Hub
 
 Eight built-in blanks — tee, v-neck, long sleeve, tank, sweatshirt, hoodie,
@@ -98,7 +102,7 @@ server/                Node + Express print-production service
   test/                61 tests
 web/                   the mobile web app (static ES modules, no build step)
   js/screens/          create · shirts · designs · share · the canvas editor
-  test/                30 tests over the coordinate maths and preview sizing
+  test/                37 tests over the coordinate maths, previews and theming
 Dockerfile             single image serving both the API and the static app
 render.yaml            Render blueprint (Docker, free plan, no disk — see below)
 ```

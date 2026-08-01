@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { assetImg } from '../asset-image.js';
 import { getState, store, subscribe } from '../store.js';
+import { getThemePreference, setThemePreference, THEME_OPTIONS } from '../theme.js';
 import {
   button,
   confirmSheet,
@@ -9,6 +10,7 @@ import {
   formatDate,
   icon,
   promptSheet,
+  segmented,
   setChildren,
   sheet,
   toast,
@@ -40,7 +42,21 @@ export function renderCreateScreen({ mount }) {
       el(
         'div',
         { class: 'screen-head' },
-        el('h1', {}, 'Create'),
+        el(
+          'div',
+          { class: 'head-row' },
+          el('h1', {}, 'Create'),
+          el(
+            'button',
+            {
+              type: 'button',
+              class: 'icon-btn',
+              'aria-label': 'Appearance',
+              onClick: () => openAppearanceSheet(),
+            },
+            icon('contrast'),
+          ),
+        ),
         el(
           'p',
           {},
@@ -295,6 +311,38 @@ export function renderCreateScreen({ mount }) {
   }
 
   return () => unsubscribe();
+}
+
+/**
+ * Appearance. Lives here because Create is where the app opens, and it is a
+ * setting you reach for once and then forget about.
+ */
+function openAppearanceSheet() {
+  return sheet({
+    title: 'Appearance',
+    render: () => {
+      const host = el('div');
+
+      const paint = () =>
+        setChildren(host,
+          segmented(THEME_OPTIONS, getThemePreference(), (value) => {
+            setThemePreference(value);
+            paint();
+          }),
+        );
+
+      paint();
+
+      return [
+        host,
+        el(
+          'p',
+          { class: 'field-hint', style: { marginTop: '10px' } },
+          'The studio opens light so artwork reads the way it will on press. Match device follows your phone instead.',
+        ),
+      ];
+    },
+  });
 }
 
 function assetThumb(asset) {

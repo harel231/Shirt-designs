@@ -95,6 +95,7 @@ const ICON_PATHS = {
   download: 'M12 3v12M7 11l5 5 5-5M4 20h16',
   arrowUp: 'M12 20V5M6 11l6-6 6 6',
   arrowDown: 'M12 4v15M6 13l6 6 6-6',
+  contrast: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18',
 };
 
 export function icon(name, size) {
