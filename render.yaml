@@ -1,0 +1,22 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# One service, built from the Dockerfile at the repo root, with a persistent
+# disk mounted where the server keeps uploads, exports and its database. Without
+# that disk, a Render service still works (unlike Vercel's serverless
+# functions — this is a normal long-running container) but loses everything on
+# a redeploy or restart, which defeats the point of a design library.
+services:
+  - type: web
+    name: shirt-designs
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: SHIRT_DATA_DIR
+        value: /data
+      - key: PORT
+        value: 4000
+    disk:
+      name: shirt-designs-data
+      mountPath: /data
+      sizeGB: 1

@@ -98,6 +98,8 @@ server/                Node + Express print-production service
 web/                   the mobile web app (static ES modules, no build step)
   js/screens/          create · shirts · designs · share · the canvas editor
   test/                25 tests over the coordinate maths
+Dockerfile             single image serving both the API and the static app
+render.yaml            Render blueprint (Docker + persistent disk)
 ```
 
 There is no bundler and no build step. The app is plain ES modules served
@@ -133,13 +135,59 @@ Font *files* are fetched from Google the first time a family is actually used
 and cached on disk from then on, so a family you have used before keeps working
 without a connection.
 
-## Sending a link outside your network
+## Deploying for a public URL
 
-Share links are only as reachable as the server. On a home network the address
-works for anyone on the same Wi-Fi. To send one to an outside vendor, expose
-the server through a tunnel and set `PUBLIC_BASE_URL` to the public address so
-generated links point at it:
+This is a normal long-running Node process with a writable local disk — not
+a stateless request handler. **It cannot run on Vercel, Netlify, or any other
+serverless-functions platform**: those give a function a fresh, read-only
+filesystem on every invocation, and this app writes uploads, exports and its
+database to disk on nearly every request. It will crash on the first request
+that tries to write anything (`ensureStorage()` failing to `mkdir` is the
+usual first error).
+
+Use a host that runs a real container with a persistent disk — Render,
+Railway, Fly.io, or your own VPS/Docker host all work. A `Dockerfile` is
+included and builds this repo as-is, with no native build dependencies (every
+server package is pure JS).
+
+### Render (one click, no card required for the base service)
+
+A `render.yaml` blueprint is included:
+
+1. Push this repo to GitHub.
+2. On Render, **New → Blueprint**, point it at the repo.
+3. It provisions the web service from the `Dockerfile` with a 1 GB persistent
+   disk mounted at `/data` (`SHIRT_DATA_DIR`).
+
+The blueprint uses Render's `starter` plan, which is what supports the
+persistent disk — check Render's current pricing before deploying. Without a
+disk (e.g. on a free instance) the app still runs correctly between requests,
+it just loses uploads/designs/exports whenever the instance restarts or
+redeploys.
+
+### Railway / Fly.io / your own host
+
+Same `Dockerfile`, any Docker host:
 
 ```bash
-PUBLIC_BASE_URL=https://your-tunnel.example npm start
+docker build -t shirt-designs .
+docker run -p 4000:4000 -v shirt-designs-data:/data shirt-designs
 ```
+
+Mount a persistent volume at `/data` (or wherever you point `SHIRT_DATA_DIR`)
+on whichever platform you pick — that volume *is* the design library, so
+losing it means losing every saved asset, shirt type and export.
+
+Once deployed, set `PUBLIC_BASE_URL` to the public URL so share links the app
+generates point at it instead of guessing from the request:
+
+```bash
+PUBLIC_BASE_URL=https://your-app.example
+```
+
+### If you already tried Vercel
+
+Delete or disconnect that project — left connected, it will keep redeploying
+and crashing on every push to this branch. Nothing in this repo targets
+Vercel; if a project there is auto-importing from GitHub, that happened on
+Vercel's side, not from anything committed here.
