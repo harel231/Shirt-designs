@@ -483,14 +483,33 @@ describe('http api', () => {
     assert.equal(second.body.items.length, first.body.items.length);
   });
 
-  it('serves a tinted garment for any colourway', async () => {
+  it('seeds the built-in catalog from real garment photos', async () => {
     const { body } = await get('/api/shirts');
-    const shirt = body.items[0];
-    const res = await fetch(base + shirt.colorways[1].frontUrl);
+    for (const shirt of body.items) {
+      assert.equal(shirt.source, 'photo', `${shirt.name} should be a photographed garment`);
+      assert.equal(shirt.colorways.length, 1);
+      assert.ok(shirt.colorways[0].frontUrl?.endsWith('front.png'));
+      assert.ok(shirt.colorways[0].backUrl?.endsWith('back.png'));
+    }
+  });
 
+  it('serves a tinted garment for a shape-based colourway', async () => {
+    const form = new FormData();
+    form.append('name', 'Test Blank');
+    form.append('shape', 'tee');
+    form.append('colorways', JSON.stringify([
+      { name: 'White', hex: '#ffffff' },
+      { name: 'Black', hex: '#141414' },
+    ]));
+
+    const created = await (
+      await fetch(`${base}/api/shirts`, { method: 'POST', body: form })
+    ).json();
+
+    const res = await fetch(base + created.colorways[1].frontUrl);
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type'), /svg/);
-    assert.ok((await res.text()).includes(shirt.colorways[1].hex));
+    assert.ok((await res.text()).includes(created.colorways[1].hex));
   });
 
   it('searches the font catalog with prefix matches first', async () => {

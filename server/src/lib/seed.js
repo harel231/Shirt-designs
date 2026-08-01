@@ -1,136 +1,136 @@
-import { db } from './store.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { decode, encodePng, letterbox } from './image.js';
 import { newId } from './ids.js';
+import { BUNDLED_DATA_DIR, SHIRTS_DIR } from './paths.js';
+import { CANVAS } from '../templates/garments.js';
+import { db } from './store.js';
 
 /**
- * The starting shirt catalog.
- *
- * These are generic blank-garment templates, not any brand's actual product.
- * Real products (a specific Carhartt or Saucony style) are added by the user
- * from the app, with their own photographs and measured print areas — see
+ * The starting shirt catalog: real garments the studio photographed, not
+ * generated silhouettes. Each entry ships a front and back photo under
+ * data/stock-shirts/ and is seeded as a `photo`-sourced shirt type, the same
+ * shape the app produces when a user adds their own garment from photos — see
  * POST /api/shirts.
  */
 
-const STOCK_COLORS = [
-  { name: 'White', hex: '#ffffff' },
-  { name: 'Black', hex: '#141414' },
-  { name: 'Athletic Heather', hex: '#c9ccd1' },
-  { name: 'Navy', hex: '#1f2a44' },
-  { name: 'Red', hex: '#c8102e' },
-  { name: 'Royal', hex: '#1b4fa0' },
-  { name: 'Forest', hex: '#1f4032' },
-  { name: 'Sand', hex: '#d9c9a8' },
-  { name: 'Maroon', hex: '#5a1a2b' },
-  { name: 'Military Green', hex: '#4b5320' },
-];
+const STOCK_DIR = join(BUNDLED_DATA_DIR, 'stock-shirts');
 
 /**
- * Print areas are given in canvas pixels (where they sit on the mockup) and in
- * inches (their true printed size). Both are needed: the first positions the
- * artwork on the mockup, the second scales the production PDF.
+ * Print area shared by every stock garment: a 12" x 16" chest print,
+ * positioned in canvas pixels. Matches the default a freshly photographed
+ * shirt gets in the shirts route — adjustable per shirt afterwards from the
+ * app ("Adjust print area").
  */
-const TEMPLATES = [
+const DEFAULT_AREA = {
+  front: { x: 307, y: 366, width: 386, height: 515, widthIn: 12, heightIn: 16 },
+  back: { x: 307, y: 336, width: 386, height: 515, widthIn: 12, heightIn: 16 },
+};
+
+const STOCK_GARMENTS = [
   {
-    name: 'Classic Tee',
-    category: 'T-shirt',
-    shape: 'tee',
-    printAreas: {
-      front: { x: 307, y: 366, width: 386, height: 515, widthIn: 12, heightIn: 16 },
-      back: { x: 307, y: 336, width: 386, height: 515, widthIn: 12, heightIn: 16 },
-    },
+    slug: 'carhartt-pocket-tan',
+    name: 'Carhartt Pocket Tee — Tan',
+    brand: 'Carhartt',
+    colorName: 'Tan',
+    colorHex: '#96876f',
   },
   {
-    name: 'V-Neck Tee',
-    category: 'T-shirt',
-    shape: 'vneck',
-    printAreas: {
-      front: { x: 307, y: 430, width: 386, height: 450, widthIn: 12, heightIn: 14 },
-      back: { x: 307, y: 336, width: 386, height: 515, widthIn: 12, heightIn: 16 },
-    },
+    slug: 'boxy-tee-black',
+    name: 'Boxy Tee — Black',
+    brand: '',
+    colorName: 'Black',
+    colorHex: '#1a1a1a',
   },
   {
-    name: 'Long Sleeve Tee',
-    category: 'T-shirt',
-    shape: 'longsleeve',
-    printAreas: {
-      front: { x: 307, y: 366, width: 386, height: 515, widthIn: 12, heightIn: 16 },
-      back: { x: 307, y: 336, width: 386, height: 515, widthIn: 12, heightIn: 16 },
-    },
+    slug: 'boxy-tee-white',
+    name: 'Boxy Tee — White',
+    brand: '',
+    colorName: 'White',
+    colorHex: '#f5f5f5',
   },
   {
-    name: 'Tank Top',
-    category: 'Tank',
-    shape: 'tank',
-    printAreas: {
-      front: { x: 338, y: 420, width: 324, height: 454, widthIn: 10, heightIn: 14 },
-      back: { x: 338, y: 400, width: 324, height: 454, widthIn: 10, heightIn: 14 },
-    },
+    slug: 'carhartt-pocket-black',
+    name: 'Carhartt Pocket Tee — Black',
+    brand: 'Carhartt',
+    colorName: 'Black',
+    colorHex: '#1a1a1a',
   },
   {
-    name: 'Crewneck Sweatshirt',
-    category: 'Fleece',
-    shape: 'crewneck',
-    printAreas: {
-      front: { x: 296, y: 380, width: 408, height: 476, widthIn: 12, heightIn: 14 },
-      back: { x: 296, y: 356, width: 408, height: 476, widthIn: 12, heightIn: 14 },
-    },
+    slug: 'carhartt-pocket-white',
+    name: 'Carhartt Pocket Tee — White',
+    brand: 'Carhartt',
+    colorName: 'White',
+    colorHex: '#f7f7f5',
   },
   {
-    name: 'Pullover Hoodie',
-    category: 'Fleece',
-    shape: 'hoodie',
-    // The kangaroo pocket caps how low a front print can go.
-    printAreas: {
-      front: { x: 296, y: 430, width: 408, height: 374, widthIn: 12, heightIn: 11 },
-      back: { x: 296, y: 400, width: 408, height: 476, widthIn: 12, heightIn: 14 },
-    },
+    slug: 'classic-tee-pink',
+    name: 'Classic Tee — Pink',
+    brand: '',
+    colorName: 'Pink',
+    colorHex: '#f6cdd3',
   },
   {
-    name: 'Polo Shirt',
-    category: 'Polo',
-    shape: 'polo',
-    // Polos are normally decorated left-chest only; the placket blocks the centre.
-    printAreas: {
-      front: { x: 560, y: 380, width: 129, height: 129, widthIn: 4, heightIn: 4 },
-      back: { x: 307, y: 336, width: 386, height: 450, widthIn: 12, heightIn: 14 },
-    },
+    slug: 'saucony-performance-black',
+    name: 'Saucony Performance Tee — Black',
+    brand: 'Saucony',
+    colorName: 'Black',
+    colorHex: '#202020',
   },
   {
-    name: 'Heavyweight Work Shirt',
-    category: 'Workwear',
-    shape: 'workshirt',
-    printAreas: {
-      front: { x: 307, y: 380, width: 386, height: 450, widthIn: 12, heightIn: 14 },
-      back: { x: 296, y: 350, width: 408, height: 515, widthIn: 12, heightIn: 16 },
-    },
+    slug: 'military-tee-olive',
+    name: 'Military Tee — Olive',
+    brand: '',
+    colorName: 'Olive',
+    colorHex: '#6b6b47',
   },
 ];
+
+/** Decodes a bundled stock photo and letterboxes it onto the shared canvas. */
+function storeStockImage(shirtId, colorwayId, view, slug) {
+  const buffer = readFileSync(join(STOCK_DIR, `${slug}-${view}.jpg`));
+  const image = letterbox(decode(buffer), CANVAS);
+  const file = `${shirtId}-${colorwayId}-${view}.png`;
+  writeFileSync(join(SHIRTS_DIR, file), encodePng(image));
+  return file;
+}
 
 export function seedShirtCatalog() {
   if (db.all('shirtTypes').length > 0) return { seeded: 0 };
 
   const now = new Date().toISOString();
-  for (const template of TEMPLATES) {
+  for (const garment of STOCK_GARMENTS) {
+    const id = newId('shirt');
+    const colorwayId = newId('color');
+    const views = {
+      front: storeStockImage(id, colorwayId, 'front', garment.slug),
+      back: storeStockImage(id, colorwayId, 'back', garment.slug),
+    };
+
     db.insert('shirtTypes', {
-      id: newId('shirt'),
-      name: template.name,
-      brand: '',
-      category: template.category,
-      source: 'template',
-      shape: template.shape,
+      id,
+      name: garment.name,
+      brand: garment.brand,
+      category: 'T-shirt',
+      source: 'photo',
+      shape: null,
       builtIn: true,
-      printAreas: template.printAreas,
-      colorways: STOCK_COLORS.map((color) => ({
-        id: newId('color'),
-        name: color.name,
-        hex: color.hex,
-        source: 'template',
-      })),
+      printAreas: structuredClone(DEFAULT_AREA),
+      colorways: [
+        {
+          id: colorwayId,
+          name: garment.colorName,
+          hex: garment.colorHex,
+          source: 'photo',
+          views,
+        },
+      ],
       createdAt: now,
       updatedAt: now,
     });
   }
 
-  return { seeded: TEMPLATES.length };
+  return { seeded: STOCK_GARMENTS.length };
 }
 
-export { STOCK_COLORS, TEMPLATES };
+export { STOCK_GARMENTS, DEFAULT_AREA };
