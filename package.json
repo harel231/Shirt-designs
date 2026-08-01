@@ -1,0 +1,26 @@
+{
+  "name": "shirt-designs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "All-in-one t-shirt design studio: native mobile app plus print production service",
+  "workspaces": [
+    "server",
+    "app"
+  ],
+  "scripts": {
+    "server": "npm run start --workspace server",
+    "server:dev": "npm run dev --workspace server",
+    "server:test": "npm run test --workspace server",
+    "app": "npm run start --workspace app",
+    "android": "npm run android --workspace app",
+    "ios": "npm run ios --workspace app",
+    "typecheck": "npm run typecheck --workspace app",
+    "test": "npm run test --workspace server"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

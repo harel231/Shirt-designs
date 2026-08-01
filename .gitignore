@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+build/
+*.log
+server/data/storage/
+server/data/cache/
+.env
+.env.local
+.DS_Store
+.scratch/
