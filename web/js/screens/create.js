@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { assetImg } from '../asset-image.js';
 import { getState, store, subscribe } from '../store.js';
 import {
   button,
@@ -164,7 +165,7 @@ export function renderCreateScreen({ mount }) {
         class: 'tile',
         onClick: () => openAssetSheet(asset),
       },
-      el('div', { class: 'tile-art checker' }, el('img', { src: api.assets.fileUrl(asset.id), alt: '', loading: 'lazy' })),
+      el('div', { class: 'tile-art checker' }, assetImg(asset, { alt: '', loading: 'lazy' })),
       el(
         'div',
         { class: 'tile-label' },
@@ -190,12 +191,12 @@ export function renderCreateScreen({ mount }) {
         el(
           'div',
           { class: 'preview-pane checker' },
-          el('img', { src: api.assets.fileUrl(asset.id), alt: asset.name }),
+          assetImg(asset, { alt: asset.name }),
         ),
         el(
           'p',
           { class: 'field-hint' },
-          `${describeSource(asset)} · ${asset.width} × ${asset.height} · added ${formatDate(asset.createdAt)}`,
+          `${describeSource(asset)} · ${formatSize(asset)} · added ${formatDate(asset.createdAt)}`,
         ),
         asset.kind === 'raster'
           ? el(
@@ -297,11 +298,17 @@ export function renderCreateScreen({ mount }) {
 }
 
 function assetThumb(asset) {
-  return el(
-    'div',
-    { class: 'thumb checker' },
-    el('img', { src: api.assets.fileUrl(asset.id), alt: '', loading: 'lazy' }),
-  );
+  return el('div', { class: 'thumb checker' }, assetImg(asset, { alt: '', loading: 'lazy' }));
+}
+
+/**
+ * Artwork dimensions. A PDF page is measured in points and can carry them to
+ * six decimal places — nobody needs to read those.
+ */
+function formatSize(asset) {
+  const size = `${Math.round(asset.width)} × ${Math.round(asset.height)}`;
+  if (asset.format === 'pdf') return `${size} pt`;
+  return asset.kind === 'raster' ? `${size} px` : size;
 }
 
 function describeSource(asset) {

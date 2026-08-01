@@ -167,12 +167,27 @@ exportsRouter.post('/designs/:id/export', async (req, res, next) => {
     });
 
     // Raw vector sources alongside the PDF — many shops prefer to open the SVG.
+    // Artwork that arrived as a PDF ships as that original file instead: its
+    // SVG is only the on-screen placeholder, which would be useless to a
+    // printer.
     for (const asset of ctx.assets.values()) {
       if (asset.kind !== 'vector') continue;
-      const name = `vectors/${slugify(asset.name)}-${asset.id}.svg`;
-      await writeFile(join(dir, name), asset.svg, 'utf8');
+      const stem = `vectors/${slugify(asset.name)}-${asset.id}`;
+
+      if (asset.format === 'pdf') {
+        await writeFile(join(dir, `${stem}.pdf`), asset.pdfBuffer);
+        files.push({
+          name: `${stem}.pdf`,
+          type: 'application/pdf',
+          role: 'vector-source',
+          description: `Original vector source for "${asset.name}", exactly as supplied.`,
+        });
+        continue;
+      }
+
+      await writeFile(join(dir, `${stem}.svg`), asset.svg, 'utf8');
       files.push({
-        name,
+        name: `${stem}.svg`,
         type: 'image/svg+xml',
         role: 'vector-source',
         description: `Editable vector source for "${asset.name}".`,

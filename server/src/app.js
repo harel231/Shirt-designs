@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import cors from 'cors';
 import express from 'express';
 import { loadCatalog } from './lib/fonts.js';
@@ -10,6 +11,18 @@ import { exportsRouter } from './routes/exports.js';
 import { fontsRouter } from './routes/fonts.js';
 import { shareRouter } from './routes/share.js';
 import { shirtsRouter } from './routes/shirts.js';
+
+const require = createRequire(import.meta.url);
+
+/**
+ * pdf.js, served to the browser as plain modules.
+ *
+ * PDF artwork is the one asset kind the server cannot draw a preview of — see
+ * lib/pdfvector.js — so the app renders it on the device instead. Shipping the
+ * library from node_modules keeps the web app buildless and the version
+ * pinned in the lockfile rather than vendored into the repo.
+ */
+const PDFJS_ROOT = dirname(require.resolve('pdfjs-dist/package.json'));
 
 export function createApp() {
   ensureStorage();
@@ -36,6 +49,14 @@ export function createApp() {
   app.use('/api/fonts', fontsRouter);
   app.use('/api', exportsRouter);
   app.use('/share', shareRouter);
+
+  // Versioned by the lockfile and immutable once installed, so it can be
+  // cached hard: the worker and the font data are the largest things the app
+  // ever downloads.
+  app.use(
+    '/vendor/pdfjs',
+    express.static(PDFJS_ROOT, { immutable: true, maxAge: '1y', index: false }),
+  );
 
   // The studio itself: a mobile web app served from the same origin, so a phone
   // only needs the one URL and there is no cross-origin setup to get wrong.

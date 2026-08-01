@@ -78,6 +78,8 @@ export const api = {
     remove: (id, force = false) =>
       request(`/api/assets/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
     fileUrl: (id) => `/api/assets/${id}/file`,
+    // The untouched upload, which only PDF artwork has. See asset-image.js.
+    sourceUrl: (id) => `/api/assets/${id}/source`,
   },
 
   shirts: {
