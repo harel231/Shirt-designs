@@ -160,8 +160,19 @@ a { color: var(--accent); }
 .row-body { flex: 1; min-width: 0; }
 .row-body strong { display: block; font-weight: 600; font-size: 15px; }
 .row-body span { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+/*
+ * Names come from whoever typed them, so a Hebrew layer name reads right to
+ * left while the interface around it stays left to right. `plaintext` is the
+ * CSS spelling of dir="auto": each name picks its own direction from its first
+ * strong character.
+ */
 .row-body .truncate,
-.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
 .row .chev { color: var(--faint); flex: none; }
 
 .thumb {

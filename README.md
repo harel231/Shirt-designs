@@ -29,6 +29,7 @@ Wi-Fi).
 | **Vector conversion** | Traces a bitmap into filled paths and reports the resulting palette — that count is the number of screens a screen printer will charge you for. Ink count and detail level are adjustable. |
 | **PDF artwork** | Vector art a client hands over as a PDF goes in as-is — nothing to trace, nothing to trim. It is previewed on the device with pdf.js and embedded page-for-page in the production file, so a complex logo prints exactly as sharp as the source. |
 | **Text tool** | All **1,908 Google Fonts**, searchable offline. Weight, italic, alignment, letter spacing, line spacing and arched type. |
+| **Right-to-left type** | Hebrew is reordered into visual order before it is outlined, so it prints the way it reads — including Latin words and years embedded in a Hebrew line, which keep running left to right. Direction is read from the text and can be overridden. The font picker filters to the families that can actually draw a script, and the tool says so when the chosen family cannot. |
 | **Design library** | Holds only what you explicitly save. Work in progress sits in a separate drafts shelf, so experiments never clutter the shelf you drag from. |
 
 Text is converted to **vector outlines**, never live text. That is what a print
@@ -95,11 +96,12 @@ imprint area, and artwork missing from the library.
 
 ```
 server/                Node + Express print-production service
-  src/lib/             background removal, tracing, fonts, text outlining, PDF
+  src/lib/             background removal, tracing, fonts, text outlining,
+                       bidirectional reordering, PDF
   src/routes/          REST API + the public share pages
   src/templates/       parametric garment artwork
   data/                bundled Google Fonts catalog (checked in)
-  test/                61 tests
+  test/                81 tests
 web/                   the mobile web app (static ES modules, no build step)
   js/screens/          create · shirts · designs · share · the canvas editor
   test/                37 tests over the coordinate maths, previews and theming

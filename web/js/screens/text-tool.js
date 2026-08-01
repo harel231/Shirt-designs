@@ -48,6 +48,10 @@ export function openTextTool({ initial } = {}) {
     align: initial?.align ?? 'center',
     arc: initial?.arc ?? 0,
     color: initial?.color ?? '#111111',
+    // 'auto' reads the text itself: Hebrew comes out right to left without
+    // anyone having to say so. The override is for mixed lines, where the
+    // first strong word is not the one that sets the direction.
+    direction: initial?.direction ?? 'auto',
     size: OUTLINE_SIZE,
   };
 
@@ -58,16 +62,90 @@ export function openTextTool({ initial } = {}) {
     render: () => {
       const preview = el('div', { class: 'preview-pane artwork' });
       const previewNote = el('p', { class: 'field-hint' });
+      const scriptNote = el('div', { hidden: true });
       const familyLabel = el('strong', {}, spec.family);
       const weightRow = el('div', { class: 'chips' });
 
       let previewToken = 0;
       let debounce;
 
+      /**
+       * What the family cannot do with this text, said plainly and while it
+       * can still be fixed. A Hebrew word in a Latin-only family outlines as a
+       * row of blanks, and blanks are easy to miss in a small preview.
+       */
+      function showScriptNote(result) {
+        if (result?.missingGlyphs > 0) {
+          setChildren(scriptNote,
+            el(
+              'div',
+              { class: 'note' },
+              icon('warn'),
+              el(
+                'div',
+                {},
+                `${spec.family} has no shape for ${result.missingGlyphs} character${
+                  result.missingGlyphs === 1 ? '' : 's'
+                } here — they will print as blanks.`,
+                result.scriptHint
+                  ? el(
+                      'button',
+                      {
+                        type: 'button',
+                        class: 'btn btn-ghost btn-block',
+                        style: { marginTop: '10px' },
+                        onClick: () => chooseFont(result.scriptHint),
+                      },
+                      `Show fonts that support ${titleCase(result.scriptHint)}`,
+                    )
+                  : null,
+              ),
+            ),
+          );
+          scriptNote.hidden = false;
+          return;
+        }
+
+        if (result?.unshaped) {
+          setChildren(scriptNote,
+            el(
+              'div',
+              { class: 'note' },
+              icon('warn'),
+              el(
+                'div',
+                {},
+                'Arabic letters are placed right to left here, but not joined — each one keeps its standalone shape. Check the preview before printing.',
+              ),
+            ),
+          );
+          scriptNote.hidden = false;
+          return;
+        }
+
+        scriptNote.hidden = true;
+        scriptNote.replaceChildren();
+      }
+
+      async function chooseFont(subset = '') {
+        const chosen = await openFontPicker({
+          current: spec.family,
+          sampleText: firstLine(spec.text),
+          // Land on the families that can draw what is already typed.
+          subset: subset || lastPreview?.scriptHint || '',
+        });
+        if (!chosen) return;
+        spec.family = chosen.family;
+        familyLabel.textContent = chosen.family;
+        await loadWeights();
+        refresh();
+      }
+
       async function refresh() {
         if (!spec.text.trim()) {
           setChildren(preview, el('p', { class: 'field-hint' }, 'Type something to see it.'));
           previewNote.textContent = '';
+          showScriptNote(null);
           lastPreview = null;
           return;
         }
@@ -90,10 +168,14 @@ export function openTextTool({ initial } = {}) {
           }
           previewNote.textContent = `${result.font.family} ${result.font.weight}${
             result.font.italic ? ' italic' : ''
-          } · outlined, ${result.width} × ${result.height}`;
+          } · outlined, ${result.width} × ${result.height}${
+            result.direction === 'rtl' ? ' · right to left' : ''
+          }`;
+          showScriptNote(result);
         } catch (err) {
           if (run !== previewToken) return;
           setChildren(preview, el('p', { class: 'field-hint' }, err.message));
+          showScriptNote(null);
           lastPreview = null;
         }
       }
@@ -164,6 +246,9 @@ export function openTextTool({ initial } = {}) {
         placeholder: 'BROOKLYN\nATHLETIC CLUB',
         value: spec.text,
         rows: 3,
+        // Typing Hebrew should look like typing Hebrew: the caret starts on the
+        // right and the line grows leftwards, the same way the artwork will.
+        dir: directionAttribute(spec.direction),
         onInput: (event) => {
           spec.text = event.target.value;
           schedule();
@@ -198,6 +283,7 @@ export function openTextTool({ initial } = {}) {
       return [
         preview,
         previewNote,
+        scriptNote,
         el('label', { class: 'field' }, el('span', {}, 'Text'), textarea),
         el(
           'button',
@@ -205,14 +291,7 @@ export function openTextTool({ initial } = {}) {
             type: 'button',
             class: 'row',
             style: { marginTop: '12px' },
-            onClick: async () => {
-              const chosen = await openFontPicker({ current: spec.family, sampleText: firstLine(spec.text) });
-              if (!chosen) return;
-              spec.family = chosen.family;
-              familyLabel.textContent = chosen.family;
-              await loadWeights();
-              refresh();
-            },
+            onClick: () => chooseFont(),
           },
           el('div', { class: 'thumb' }, icon('text')),
           el(
@@ -225,6 +304,25 @@ export function openTextTool({ initial } = {}) {
         ),
         el('div', { style: { marginTop: '12px' } }, el('span', { class: 'field-hint' }, 'Weight'), weightRow),
         el('div', { style: { marginTop: '12px' } }, el('span', { class: 'field-hint' }, 'Colour'), colorRow),
+        el(
+          'div',
+          { style: { marginTop: '14px' } },
+          el('span', { class: 'field-hint' }, 'Direction'),
+          el('div', { style: { height: '6px' } }),
+          segmented(
+            [
+              { value: 'auto', label: 'Auto' },
+              { value: 'ltr', label: 'L → R' },
+              { value: 'rtl', label: 'R → L' },
+            ],
+            spec.direction,
+            (value) => {
+              spec.direction = value;
+              textarea.dir = directionAttribute(value);
+              refresh();
+            },
+          ),
+        ),
         el(
           'div',
           { style: { marginTop: '14px' } },
@@ -308,6 +406,16 @@ export function openTextTool({ initial } = {}) {
         }),
       ),
   });
+}
+
+function titleCase(value) {
+  const text = String(value ?? '');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The `dir` a text box should use for a direction setting. */
+function directionAttribute(direction) {
+  return direction === 'ltr' || direction === 'rtl' ? direction : 'auto';
 }
 
 function firstLine(text) {

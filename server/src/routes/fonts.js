@@ -65,6 +65,9 @@ fontsRouter.get('/:family/sample.svg', async (req, res, next) => {
       arc: Number(req.query.arc) || 0,
       letterSpacing: Number(req.query.letterSpacing) || 0,
       align: req.query.align ?? 'center',
+      // Left off, this reads the sample itself — so a Hebrew sample previews
+      // right to left without the picker having to know anything about script.
+      direction: req.query.direction ?? 'auto',
     });
 
     res.type('image/svg+xml');
@@ -86,6 +89,10 @@ fontsRouter.post('/preview', async (req, res, next) => {
       font: result.font,
       glyphCount: result.glyphCount,
       lineCount: result.lineCount,
+      direction: result.direction,
+      missingGlyphs: result.missingGlyphs,
+      scriptHint: result.scriptHint,
+      unshaped: result.unshaped,
     });
   } catch (err) {
     next(err);

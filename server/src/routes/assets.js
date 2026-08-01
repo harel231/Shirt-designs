@@ -384,6 +384,9 @@ assetsRouter.post('/text', async (req, res, next) => {
         lineHeight: numberOr(req.body.lineHeight, 1.2),
         align: req.body.align ?? 'center',
         arc: numberOr(req.body.arc, 0),
+        // The choice, not the outcome: text edited from Hebrew to English
+        // should go back to reading its own direction.
+        direction: result.directionPreference,
         color: result.color,
       },
       saved: req.body.save === true,
