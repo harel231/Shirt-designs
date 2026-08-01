@@ -6,9 +6,10 @@ import { removeBackground, toHex } from '../lib/background.js';
 import { alphaBounds, crop, decode, encodePng, fit } from '../lib/image.js';
 import { newId } from '../lib/ids.js';
 import { ASSETS_DIR } from '../lib/paths.js';
+import { isPdf, placeholderSvg, readPdfPageSize } from '../lib/pdfvector.js';
 import { db } from '../lib/store.js';
-import { textToVector } from '../lib/text.js';
-import { traceToSvg } from '../lib/vector.js';
+import { normalizeHex, textToVector } from '../lib/text.js';
+import { recolorSvg, traceToSvg } from '../lib/vector.js';
 
 /**
  * Content Creation Hub.
@@ -31,7 +32,7 @@ const upload = multer({
 export const assetsRouter = Router();
 
 function publicAsset(asset) {
-  const { file, ...rest } = asset;
+  const { file, sourceFile, ...rest } = asset;
   return {
     ...rest,
     url: `/api/assets/${asset.id}/file`,
@@ -41,6 +42,11 @@ function publicAsset(asset) {
 
 function assetPath(asset) {
   return join(ASSETS_DIR, asset.file);
+}
+
+/** Where a PDF-vector asset's original, untouched source file lives on disk. */
+function pdfSourcePath(asset) {
+  return join(ASSETS_DIR, asset.sourceFile);
 }
 
 async function writeRaster(id, image) {
@@ -55,9 +61,16 @@ async function writeVector(id, svg) {
   return file;
 }
 
-/** Loads an asset's bytes in the shape the PDF writer wants. */
+/**
+ * Loads an asset's bytes in the shape the PDF writer wants. A PDF-vector
+ * asset carries both: `svg` for the on-canvas placeholder, and `pdfBuffer` —
+ * the real vector source — for what actually gets embedded at export time.
+ */
 export async function loadAssetForRender(asset) {
   const bytes = await readFile(assetPath(asset));
+  if (asset.format === 'pdf') {
+    return { ...asset, svg: bytes.toString('utf8'), pdfBuffer: await readFile(pdfSourcePath(asset)) };
+  }
   if (asset.kind === 'vector') return { ...asset, svg: bytes.toString('utf8') };
   return { ...asset, buffer: bytes };
 }
@@ -99,6 +112,10 @@ assetsRouter.post('/upload', upload.single('image'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Attach an image as the "image" field.' });
 
+    if (isPdf(req.file.buffer)) {
+      return res.status(201).json(await insertPdfAsset(req));
+    }
+
     const decoded = decode(req.file.buffer);
     const image = fit(decoded, MAX_WORKING_EDGE);
     const id = newId('asset');
@@ -123,6 +140,40 @@ assetsRouter.post('/upload', upload.single('image'), async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * A PDF upload is treated as ready-made vector art — there is nothing to trim
+ * a background from or trace, it is already the print-ready source. Only a
+ * placeholder is shown on the canvas (see pdfvector.js for why); the original
+ * file is kept untouched on disk and embedded directly into the production
+ * PDF at export time.
+ */
+async function insertPdfAsset(req) {
+  const { width, height } = await readPdfPageSize(req.file.buffer);
+  const id = newId('asset');
+  const name = req.body.name?.trim() || stripExtension(req.file.originalname) || 'PDF artwork';
+
+  const sourceFile = `${id}.pdf`;
+  await writeFile(join(ASSETS_DIR, sourceFile), req.file.buffer);
+  const file = await writeVector(id, placeholderSvg(width, height, req.file.originalname));
+
+  return publicAsset(
+    db.insert('assets', {
+      id,
+      name,
+      kind: 'vector',
+      format: 'pdf',
+      source: 'pdf-upload',
+      file,
+      sourceFile,
+      width,
+      height,
+      palette: null,
+      saved: req.body.save === 'true',
+      createdAt: new Date().toISOString(),
+    }),
+  );
+}
 
 /**
  * Background removal. Produces a *new* asset so the original stays available
@@ -208,9 +259,15 @@ assetsRouter.post('/:id/vectorize', async (req, res, next) => {
     // in the output paths, so cap the working size.
     const image = fit(decoded, 1400);
     const traced = traceToSvg(image, {
-      colors: numberOr(req.body.colors, 8),
       quality: req.body.quality,
+      alphaThreshold: numberOr(req.body.alphaThreshold, 0.5),
     });
+
+    if (traced.pathCount === 0) {
+      return res.status(400).json({
+        error: 'Nothing traced above that threshold. Try a lower cutoff, or remove the background first.',
+      });
+    }
 
     const id = newId('asset');
     const file = await writeVector(id, traced.svg);
@@ -226,7 +283,45 @@ assetsRouter.post('/:id/vectorize', async (req, res, next) => {
       height: traced.height,
       palette: traced.palette,
       pathCount: traced.pathCount,
-      settings: { colors: numberOr(req.body.colors, 8), quality: req.body.quality ?? 'balanced' },
+      settings: { quality: req.body.quality ?? 'balanced' },
+      saved: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    res.status(201).json(publicAsset(asset));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Recolours a traced vector. This is a fill swap, not a re-trace — trying five
+ * different ink colours costs nothing but five small SVG writes.
+ */
+assetsRouter.post('/:id/recolor', async (req, res, next) => {
+  try {
+    const source = db.find('assets', req.params.id);
+    if (!source) return res.status(404).json({ error: 'No such asset.' });
+    if (source.kind !== 'vector' || source.source !== 'vectorized') {
+      return res.status(400).json({ error: 'Only traced artwork can be recoloured this way.' });
+    }
+
+    const svg = recolorSvg(await readFile(assetPath(source), 'utf8'), req.body.color);
+    const id = newId('asset');
+    const file = await writeVector(id, svg);
+
+    const asset = db.insert('assets', {
+      id,
+      name: source.name,
+      kind: 'vector',
+      source: 'vectorized',
+      parentId: source.parentId ?? source.id,
+      file,
+      width: source.width,
+      height: source.height,
+      palette: [{ color: normalizeHex(req.body.color) ?? '#000000', paths: source.pathCount ?? 1 }],
+      pathCount: source.pathCount,
+      settings: source.settings,
       saved: false,
       createdAt: new Date().toISOString(),
     });
@@ -324,6 +419,7 @@ assetsRouter.delete('/:id', async (req, res, next) => {
 
     db.remove('assets', asset.id);
     await unlink(assetPath(asset)).catch(() => {});
+    if (asset.sourceFile) await unlink(pdfSourcePath(asset)).catch(() => {});
     res.json({ deleted: asset.id });
   } catch (err) {
     next(err);

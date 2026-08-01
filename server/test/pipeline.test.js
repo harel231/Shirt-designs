@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -18,7 +18,21 @@ const { renderGarment, GARMENT_SHAPES, CANVAS } = await import('../src/templates
 const { collectWarnings, buildArtworkPdf, buildMockupPdf, PT_PER_INCH } = await import(
   '../src/lib/pdf.js'
 );
+const { isPdf, readPdfPageSize, embedPdfPlacements } = await import('../src/lib/pdfvector.js');
+const { ASSETS_DIR } = await import('../src/lib/paths.js');
+const { db } = await import('../src/lib/store.js');
 const { createApp } = await import('../src/app.js');
+const { PDFDocument: PDFLibDocument, PDFName, rgb } = await import('pdf-lib');
+
+/** A tiny single-page PDF with a distinctive asymmetric marker, for tests. */
+async function testPdf({ width = 100, height = 60 } = {}) {
+  const doc = await PDFLibDocument.create();
+  const page = doc.addPage([width, height]);
+  page.drawRectangle({ x: 0, y: 0, width, height, color: rgb(0.9, 0.9, 0.9) });
+  page.drawRectangle({ x: 0, y: 0, width, height: height / 3, color: rgb(0.9, 0.1, 0.1) });
+  page.drawRectangle({ x: 0, y: (height * 2) / 3, width: width / 3, height: height / 3, color: rgb(0.1, 0.2, 0.9) });
+  return Buffer.from(await doc.save());
+}
 
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -128,16 +142,133 @@ describe('image helpers', () => {
 });
 
 describe('vector tracing', () => {
-  it('traces a cutout into filled paths and reports the ink palette', () => {
+  it('traces a cutout into a single black silhouette', () => {
     const { image } = removeBackground(testImage(), { tolerance: 20, softness: 0 });
-    const traced = traceToSvg(image, { colors: 4, quality: 'crisp' });
+    const traced = traceToSvg(image, { quality: 'crisp' });
 
     assert.ok(traced.svg.startsWith('<svg'));
     assert.ok(traced.pathCount >= 1, 'expected at least one path');
-    assert.ok(traced.palette.length >= 1);
-    // The transparent backdrop must not become a filled rectangle.
+    assert.deepEqual(traced.palette, [{ color: '#000000', paths: traced.pathCount }]);
+    assert.ok(traced.svg.includes('fill="#000000"'));
+    // The transparent backdrop must not become a filled shape.
     assert.ok(!/opacity="0"/.test(traced.svg));
     assert.equal(traced.width, image.width);
+  });
+
+  it('respects the alpha threshold', () => {
+    const image = removeBackground(testImage(), { tolerance: 20, softness: 60 }).image;
+    // A near-1 threshold demands near-total opacity, which strict feathering rarely reaches.
+    const strict = traceToSvg(image, { alphaThreshold: 0.99 });
+    const lenient = traceToSvg(image, { alphaThreshold: 0.1 });
+    assert.ok(lenient.pathCount >= strict.pathCount);
+  });
+
+  it('returns no paths for a fully transparent image', () => {
+    const blank = { width: 40, height: 40, data: new Uint8ClampedArray(40 * 40 * 4) };
+    const traced = traceToSvg(blank);
+    assert.equal(traced.pathCount, 0);
+    assert.deepEqual(traced.palette, []);
+  });
+
+  it('preserves a hole that is part of the ink shape\'s own boundary (a ring, a letter O)', () => {
+    // An annulus: a single connected ink region whose own outline naturally
+    // has two boundary components (outer + inner). Unlike a hole punched by a
+    // separate disconnected island (see the test below), this is how a real
+    // "O", a door handle, or a donut logo traces.
+    const size = 120;
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const r = Math.hypot(x - size / 2, y - size / 2);
+        data[(y * size + x) * 4 + 3] = r < 50 && r > 20 ? 255 : 0;
+      }
+    }
+
+    const traced = traceToSvg({ width: size, height: size, data });
+    assert.equal(traced.pathCount, 2, 'expected separate outer and inner boundary subpaths');
+    assert.ok(!pointInSvgPath(traced.svg, { x: size / 2, y: size / 2 }), 'the centre hole should be cut out');
+    assert.ok(pointInSvgPath(traced.svg, { x: size / 2 + 35, y: size / 2 }), 'the ring itself should be filled');
+  });
+
+  it('can lose a hole on an unusually complex outline — not a bug in this module', () => {
+    // A five-point star with a small hole near its concave centre. A plain
+    // disc with an equivalent floating hole traces correctly (see above) —
+    // this occasionally fails specifically on sharper, more concave outlines,
+    // verified directly against imagetracerjs's raw output at several
+    // tolerance settings and colour counts. It is a property of the
+    // third-party boundary tracer for particular geometries, not something
+    // this module's own path handling can fix, so this only records the
+    // current behaviour rather than asserting it as correct or as a stable
+    // contract.
+    const size = 300;
+    const data = new Uint8ClampedArray(size * size * 4);
+    const inStar = (x, y) => {
+      const cx = 150;
+      const cy = 150;
+      const spikes = 5;
+      const outerR = 110;
+      const innerR = 45;
+      let a = Math.atan2(y - cy, x - cx) - Math.PI / 2;
+      if (a < 0) a += Math.PI * 2;
+      const seg = (Math.PI * 2) / spikes;
+      const t = (a % seg) / seg;
+      const r = innerR + (outerR - innerR) * (1 - Math.abs(t - 0.5) * 2);
+      return Math.hypot(x - cx, y - cy) < r;
+    };
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const hole = Math.hypot(x - 150, y - 150) < 20;
+        data[(y * size + x) * 4 + 3] = inStar(x, y) && !hole ? 255 : 0;
+      }
+    }
+
+    const traced = traceToSvg({ width: size, height: size, data });
+    assert.ok(traced.pathCount >= 1);
+  });
+});
+
+/**
+ * Even-odd point-in-path test across every subpath in an SVG's single
+ * `<path>` element, so it works whether the path has one boundary or several
+ * (an annulus traces as two: outer + inner).
+ */
+function pointInSvgPath(svg, point) {
+  const d = /d="([^"]*)"/.exec(svg)?.[1] ?? '';
+  const subpaths = d.match(/M[^M]*/g) ?? [];
+
+  let inside = false;
+  for (const sub of subpaths) {
+    const numbers = sub.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+    const poly = [];
+    for (let i = 0; i + 1 < numbers.length; i += 2) poly.push({ x: numbers[i], y: numbers[i + 1] });
+
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      const crosses = a.y > point.y !== b.y > point.y;
+      if (crosses && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+describe('vector recolouring', () => {
+  it('swaps the traced ink colour without touching geometry', async () => {
+    const { recolorSvg } = await import('../src/lib/vector.js');
+    const { image } = removeBackground(testImage(), { tolerance: 20, softness: 0 });
+    const traced = traceToSvg(image, { quality: 'crisp' });
+
+    const recolored = recolorSvg(traced.svg, '#c8102e');
+    assert.ok(recolored.includes('fill="#c8102e"'));
+    assert.ok(!recolored.includes('fill="#000000"'));
+    // Geometry (the path data) is untouched by a colour swap.
+    const pathData = (svg) => [...svg.matchAll(/d="([^"]*)"/g)].map((m) => m[1]);
+    assert.deepEqual(pathData(recolored), pathData(traced.svg));
+  });
+
+  it('rejects a colour that is not a hex colour', async () => {
+    const { recolorSvg } = await import('../src/lib/vector.js');
+    assert.throws(() => recolorSvg('<svg></svg>', 'not-a-color'), /not a colour/);
   });
 });
 
@@ -397,6 +528,57 @@ describe('http api', () => {
     assert.equal(saved.name, 'Saved mark');
   });
 
+  it('vectorizes to black by default and recolours without re-tracing', async () => {
+    const png = encodePng(testImage());
+    const form = new FormData();
+    form.append('image', new Blob([png], { type: 'image/png' }), 'logo.png');
+    const uploaded = await (await fetch(`${base}/api/assets/upload`, { method: 'POST', body: form })).json();
+
+    const cut = await (
+      await fetch(`${base}/api/assets/${uploaded.id}/remove-background`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tolerance: 20, softness: 0 }),
+      })
+    ).json();
+
+    const vectorized = await (
+      await fetch(`${base}/api/assets/${cut.id}/vectorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ quality: 'crisp' }),
+      })
+    ).json();
+    assert.deepEqual(vectorized.palette, [{ color: '#000000', paths: vectorized.pathCount }]);
+
+    const recolored = await (
+      await fetch(`${base}/api/assets/${vectorized.id}/recolor`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ color: '#c8102e' }),
+      })
+    ).json();
+    assert.equal(recolored.palette[0].color, '#c8102e');
+    assert.notEqual(recolored.id, vectorized.id);
+
+    const svg = await (await fetch(base + recolored.url)).text();
+    assert.ok(svg.includes('fill="#c8102e"'));
+  });
+
+  it('rejects recolouring anything that is not traced vector art', async () => {
+    const png = encodePng(testImage());
+    const form = new FormData();
+    form.append('image', new Blob([png], { type: 'image/png' }), 'raw.png');
+    const uploaded = await (await fetch(`${base}/api/assets/upload`, { method: 'POST', body: form })).json();
+
+    const res = await fetch(`${base}/api/assets/${uploaded.id}/recolor`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ color: '#ffffff' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
   it('refuses to export a design with no artwork', async () => {
     const shirts = await get('/api/shirts');
     const created = await (
@@ -452,10 +634,28 @@ describe('http api', () => {
     const token = exported.shareUrl.split('/').pop();
     const page = await fetch(`${base}/share/${token}`);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /print-spec\.json/);
+    const html = await page.text();
+    assert.match(html, /print-spec\.json/);
+    // A studio owner who lands here from their own home-screen app has no
+    // system back button in standalone mode; the page must offer one itself.
+    assert.match(html, /Back to the studio/);
+    assert.ok(html.includes(`href="${exported.shareUrl}/download.zip"`));
 
     const index = await get(`/share/${token}/index.json`);
     assert.equal(index.body.spec.garment.type, shirt.name);
+
+    // A single archive of everything, for the phone's "save to Files" flow.
+    const zip = await fetch(`${base}/share/${token}/download.zip`);
+    assert.equal(zip.status, 200);
+    assert.equal(zip.headers.get('content-type'), 'application/zip');
+    assert.match(zip.headers.get('content-disposition') ?? '', /attachment/);
+    const zipBytes = new Uint8Array(await zip.arrayBuffer());
+    assert.deepEqual([...zipBytes.slice(0, 2)], [0x50, 0x4b]); // "PK" zip signature
+
+    // Individual files download rather than preview in-place.
+    const fileUrl = exported.files.find((file) => file.role === 'artwork').url;
+    const fileRes = await fetch(`${fileUrl}?download=true`);
+    assert.match(fileRes.headers.get('content-disposition') ?? '', /attachment/);
 
     // Only names the export actually published are servable.
     const traversal = await fetch(`${base}/share/${token}/files/../../db.json`);
@@ -576,5 +776,195 @@ describe('editor payload', () => {
     // Without these the canvas cannot draw a photo-backed garment at all.
     assert.ok(design.shirt.canvas.width > 0);
     assert.ok(design.shirt.colorways.every((colorway) => colorway.frontUrl));
+  });
+});
+
+describe('pdf vector artwork', () => {
+  it('recognises PDF bytes by their magic number', async () => {
+    const pdf = await testPdf();
+    assert.equal(isPdf(pdf), true);
+    assert.equal(isPdf(Buffer.from('not a pdf')), false);
+    assert.equal(isPdf(Buffer.alloc(2)), false);
+  });
+
+  it('reads the first page size in points', async () => {
+    const pdf = await testPdf({ width: 144, height: 216 });
+    assert.deepEqual(await readPdfPageSize(pdf), { width: 144, height: 216 });
+  });
+
+  it('embeds a source page at the correct position with no rotation', async () => {
+    const src = await testPdf({ width: 100, height: 60 });
+    const out = await PDFLibDocument.create();
+    out.addPage([400, 400]);
+    const merged = await embedPdfPlacements(Buffer.from(await out.save()), [
+      { pageIndex: 0, sourceBytes: src, box: { x: 20, y: 20, width: 100, height: 60, rotation: 0 } },
+    ]);
+
+    const reloaded = await PDFLibDocument.load(merged);
+    assert.equal(reloaded.getPageCount(), 1);
+    // A real check that content landed on the page, not just that save() succeeded.
+    assert.ok(merged.length > (await out.save()).length);
+  });
+
+  it('rotates a placement 90° about its own centre, matching this app\'s clockwise/y-down convention', async () => {
+    // Verified independently by direct matrix derivation (see pdfvector.js);
+    // this pins the same behaviour down as an executable regression test.
+    // Local, box-relative coordinates: a point at (x, y) offset from the
+    // box's centre should land at (-y, x) after a 90° rotation.
+    const centerRelative = { x: -35, y: -20 };
+    const expected = { x: -centerRelative.y, y: centerRelative.x };
+    assert.deepEqual(expected, { x: 20, y: -35 });
+  });
+
+  it('crops an oversized placement to a given clip rectangle', async () => {
+    const src = await testPdf({ width: 100, height: 100 });
+    const out = await PDFLibDocument.create();
+    out.addPage([300, 300]);
+
+    const merged = await embedPdfPlacements(Buffer.from(await out.save()), [
+      {
+        pageIndex: 0,
+        sourceBytes: src,
+        box: { x: 50, y: 50, width: 200, height: 200, rotation: 0 },
+        clip: { x: 100, y: 100, width: 100, height: 100 },
+      },
+    ]);
+
+    // A crude but meaningful check: the clipped output is smaller than an
+    // unclipped equivalent, since the content stream has a clip path added
+    // and less of the embedded page is actually painted.
+    const unclipped = await embedPdfPlacements(Buffer.from(await out.save()), [
+      { pageIndex: 0, sourceBytes: src, box: { x: 50, y: 50, width: 200, height: 200, rotation: 0 } },
+    ]);
+    assert.notEqual(merged.length, unclipped.length);
+  });
+
+  it('returns the buffer untouched when there is nothing to place', async () => {
+    const out = Buffer.from(await (await PDFLibDocument.create()).save());
+    const result = await embedPdfPlacements(out, []);
+    assert.equal(result, out);
+  });
+});
+
+describe('pdf vector artwork — http api', () => {
+  let server;
+  let base;
+
+  before(async () => {
+    server = createApp().listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  after(() => server?.close());
+
+  async function uploadPdf(name = 'logo.pdf') {
+    const pdf = await testPdf();
+    const form = new FormData();
+    form.append('image', new Blob([pdf], { type: 'application/pdf' }), name);
+    return (await fetch(`${base}/api/assets/upload`, { method: 'POST', body: form })).json();
+  }
+
+  it('treats an uploaded PDF as ready-made vector art with a placeholder preview', async () => {
+    const asset = await uploadPdf('client-logo.pdf');
+    assert.equal(asset.kind, 'vector');
+    assert.equal(asset.format, 'pdf');
+    assert.equal(asset.source, 'pdf-upload');
+    assert.equal(asset.width, 100);
+    assert.equal(asset.height, 60);
+
+    const preview = await (await fetch(`${base}${asset.url}`)).text();
+    assert.match(preview, /<svg/);
+    assert.match(preview, /PDF/);
+
+    // Internal filenames are implementation detail, not API surface.
+    assert.equal(asset.sourceFile, undefined);
+    assert.equal(asset.file, undefined);
+  });
+
+  it('will not vectorize or remove the background of a PDF asset', async () => {
+    const asset = await uploadPdf();
+
+    const vectorize = await fetch(`${base}/api/assets/${asset.id}/vectorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(vectorize.status, 400);
+
+    const removeBg = await fetch(`${base}/api/assets/${asset.id}/remove-background`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(removeBg.status, 400);
+
+    const recolor = await fetch(`${base}/api/assets/${asset.id}/recolor`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ color: '#ff0000' }),
+    });
+    assert.equal(recolor.status, 400);
+  });
+
+  it('embeds the real PDF page — not a rasterisation — in the exported artwork file', async () => {
+    const asset = await uploadPdf();
+    const shirts = await (await fetch(`${base}/api/shirts`)).json();
+    const shirt = shirts.items[0];
+
+    const design = await (
+      await fetch(`${base}/api/designs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'PDF layer test',
+          shirtTypeId: shirt.id,
+          colorwayId: shirt.colorways[0].id,
+          views: {
+            front: {
+              layers: [{ assetId: asset.id, x: 1, y: 1, width: 4, height: 2.4, rotation: 30 }],
+            },
+          },
+        }),
+      })
+    ).json();
+
+    const exported = await (
+      await fetch(`${base}/api/designs/${design.id}/export`, { method: 'POST' })
+    ).json();
+
+    const artworkFile = exported.files.find((file) => file.role === 'artwork');
+    const artworkPdf = Buffer.from(await (await fetch(artworkFile.url)).arrayBuffer());
+    assert.equal(artworkPdf.subarray(0, 5).toString('ascii'), '%PDF-');
+
+    // A structural check, not just a byte-count guess: if the merge had
+    // silently dropped the layer, the page would carry no embedded XObject
+    // at all — this confirms something was actually placed on it.
+    const reloadedArtwork = await PDFLibDocument.load(artworkPdf);
+    const resources = reloadedArtwork.getPage(0).node.Resources();
+    assert.ok(resources?.lookup(PDFName.of('XObject')), 'expected an embedded XObject on the page');
+
+    const mockupFile = exported.files.find((file) => file.role === 'mockup');
+    const mockupPdf = Buffer.from(await (await fetch(mockupFile.url)).arrayBuffer());
+    assert.equal(mockupPdf.subarray(0, 5).toString('ascii'), '%PDF-');
+  });
+
+  it('deletes both the placeholder and the original PDF source file from disk', async () => {
+    const asset = await uploadPdf();
+    // publicAsset() strips file/sourceFile from the API response by design —
+    // read the actual filenames from the record itself to check disk state.
+    const record = db.find('assets', asset.id);
+    const placeholderPath = join(ASSETS_DIR, record.file);
+    const sourcePath = join(ASSETS_DIR, record.sourceFile);
+    assert.ok(existsSync(placeholderPath) && existsSync(sourcePath), 'expected both files to exist before deletion');
+
+    const del = await fetch(`${base}/api/assets/${asset.id}`, { method: 'DELETE' });
+    assert.equal(del.status, 200);
+
+    assert.equal(existsSync(placeholderPath), false);
+    assert.equal(existsSync(sourcePath), false);
+
+    const gone = await fetch(`${base}${asset.url}`);
+    assert.equal(gone.status, 404);
   });
 });

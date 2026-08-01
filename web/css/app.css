@@ -8,39 +8,43 @@
  */
 
 :root {
-  --bg: #0e0f13;
-  --surface: #171922;
-  --surface-2: #1f2230;
-  --surface-3: #282c3c;
-  --line: #2c3040;
-  --ink: #f1f2f6;
-  --muted: #9aa0b0;
-  --faint: #6b7185;
-  --accent: #5b8cff;
+  /* White by default, regardless of device theme — see the dark override below. */
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #f0f1f5;
+  --surface-3: #e5e7ee;
+  --line: #dfe1e9;
+  --ink: #15161c;
+  --muted: #626878;
+  --faint: #8a90a1;
+  --accent: #2f6df6;
   --accent-ink: #ffffff;
-  --danger: #ff6b6b;
-  --warn: #f5c451;
-  --ok: #4ec9a0;
+  --danger: #d9362b;
+  --warn: #a1741a;
+  --ok: #1f8a63;
   --radius: 16px;
   --radius-sm: 10px;
   --tabbar-height: 62px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  color-scheme: dark;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #f4f5f8;
-    --surface: #ffffff;
-    --surface-2: #f0f1f5;
-    --surface-3: #e5e7ee;
-    --line: #dfe1e9;
-    --ink: #15161c;
-    --muted: #626878;
-    --faint: #8a90a1;
-    --accent: #2f6df6;
-    color-scheme: light;
+    --bg: #0e0f13;
+    --surface: #171922;
+    --surface-2: #1f2230;
+    --surface-3: #282c3c;
+    --line: #2c3040;
+    --ink: #f1f2f6;
+    --muted: #9aa0b0;
+    --faint: #6b7185;
+    --accent: #5b8cff;
+    --danger: #ff6b6b;
+    --warn: #f5c451;
+    --ok: #4ec9a0;
+    color-scheme: dark;
   }
 }
 

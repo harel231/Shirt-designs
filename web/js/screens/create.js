@@ -81,7 +81,7 @@ export function renderCreateScreen({ mount }) {
   function uploadButton() {
     const input = el('input', {
       type: 'file',
-      accept: 'image/png,image/jpeg',
+      accept: 'image/png,image/jpeg,application/pdf',
       class: 'sr-only',
       onChange: async (event) => {
         const file = event.target.files?.[0];
@@ -99,7 +99,7 @@ export function renderCreateScreen({ mount }) {
       'label',
       { class: 'btn', style: { flex: '1' } },
       icon('image'),
-      'Add image',
+      'Add image or PDF',
       input,
     );
   }
@@ -312,6 +312,8 @@ function describeSource(asset) {
       return `Vector · ${asset.palette?.length ?? 0} ink${(asset.palette?.length ?? 0) === 1 ? '' : 's'}`;
     case 'background-removed':
       return 'Cut out';
+    case 'pdf-upload':
+      return 'Vector · from PDF';
     default:
       return asset.kind === 'vector' ? 'Vector' : 'Image';
   }

@@ -33,9 +33,19 @@ export function openImageTool(startingAsset) {
     softness: 35,
     mode: 'edges',
     colors: null,
-    traceColors: 8,
     quality: 'balanced',
   };
+
+  const INK_SWATCHES = [
+    '#000000',
+    '#ffffff',
+    '#c8102e',
+    '#1f2a44',
+    '#f5c451',
+    '#4ec9a0',
+    '#2f6df6',
+    '#7d5ba6',
+  ];
 
   return sheet({
     title: 'Prepare artwork',
@@ -51,11 +61,13 @@ export function openImageTool(startingAsset) {
 
         const kind = current.kind === 'vector' ? 'Vector' : 'Bitmap';
         const detail =
-          current.kind === 'vector'
-            ? `${current.pathCount ?? 0} paths · ${current.palette?.length ?? 0} ink colour${
-                (current.palette?.length ?? 0) === 1 ? '' : 's'
-              }`
-            : `${current.width} × ${current.height} px`;
+          current.format === 'pdf'
+            ? 'original PDF page, embedded as-is at export'
+            : current.kind === 'vector'
+              ? `${current.pathCount ?? 0} paths · ${current.palette?.length ?? 0} ink colour${
+                  (current.palette?.length ?? 0) === 1 ? '' : 's'
+                }`
+              : `${current.width} × ${current.height} px`;
         meta.textContent = `${kind} · ${detail}`;
         renderSteps();
       }
@@ -212,17 +224,8 @@ export function openImageTool(startingAsset) {
           el(
             'p',
             { class: 'field-hint', style: { margin: 0 } },
-            'Vector art prints at any size, and each colour becomes one screen at the printer.',
+            'Traces a single solid shape in black — ideal for a logo or line art. Pick a different ink colour once it is traced.',
           ),
-          slider({
-            label: 'Ink colours',
-            min: 2,
-            max: 24,
-            value: settings.traceColors,
-            onInput: (v) => {
-              settings.traceColors = v;
-            },
-          }),
           el(
             'div',
             { style: { marginTop: '12px' } },
@@ -247,23 +250,44 @@ export function openImageTool(startingAsset) {
             iconName: 'vector',
             onClick: async () => {
               const result = await withBusy('Tracing outlines…', () =>
-                api.assets.vectorize(current.id, {
-                  colors: settings.traceColors,
-                  quality: settings.quality,
-                }),
+                api.assets.vectorize(current.id, { quality: settings.quality }),
               );
               store.cacheAsset(result);
               current = result;
               history.push(result);
               paint();
-              toast(`Traced into ${result.palette?.length ?? 0} ink colours.`, 'ok');
+              toast('Traced to a single vector shape.', 'ok');
             },
           }),
         );
       }
 
       function vectorDone() {
-        const inks = current.palette ?? [];
+        const inkColor = current.palette?.[0]?.color ?? '#000000';
+        const isTraced = current.source === 'vectorized';
+        const colorRow = el('div', { class: 'chips', style: { marginTop: '10px' } });
+
+        for (const swatch of INK_SWATCHES) {
+          colorRow.append(
+            el(
+              'button',
+              {
+                type: 'button',
+                class: 'chip',
+                'aria-pressed': String(swatch.toLowerCase() === inkColor.toLowerCase()),
+                onClick: async () => {
+                  const result = await withBusy('Recolouring…', () => api.assets.recolor(current.id, swatch));
+                  store.cacheAsset(result);
+                  current = result;
+                  history.push(result);
+                  paint();
+                },
+              },
+              el('span', { class: 'swatch', style: { background: swatch } }),
+            ),
+          );
+        }
+
         return el(
           'section',
           { class: 'card', style: { marginTop: '14px' } },
@@ -271,21 +295,16 @@ export function openImageTool(startingAsset) {
             'div',
             { class: 'note info' },
             icon('info'),
-            el(
-              'div',
-              {},
-              'This artwork is vector and ready to print at any size.',
-              inks.length > 0
-                ? el(
-                    'div',
-                    { class: 'swatches' },
-                    ...inks.map((ink) =>
-                      el('span', { class: 'swatch', style: { background: ink.color }, title: ink.color }),
-                    ),
-                  )
-                : null,
-            ),
+            el('div', {}, 'This artwork is vector and ready to print at any size.'),
           ),
+          isTraced
+            ? el(
+                'div',
+                { style: { marginTop: '12px' } },
+                el('span', { class: 'field-hint' }, 'Ink colour'),
+                colorRow,
+              )
+            : null,
         );
       }
 
