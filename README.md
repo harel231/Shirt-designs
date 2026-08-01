@@ -99,7 +99,7 @@ web/                   the mobile web app (static ES modules, no build step)
   js/screens/          create · shirts · designs · share · the canvas editor
   test/                25 tests over the coordinate maths
 Dockerfile             single image serving both the API and the static app
-render.yaml            Render blueprint (Docker + persistent disk)
+render.yaml            Render blueprint (Docker, free plan, no disk — see below)
 ```
 
 There is no bundler and no build step. The app is plain ES modules served
@@ -150,20 +150,40 @@ Railway, Fly.io, or your own VPS/Docker host all work. A `Dockerfile` is
 included and builds this repo as-is, with no native build dependencies (every
 server package is pure JS).
 
-### Render (one click, no card required for the base service)
+### Render free tier (no card, deployable from a phone browser)
 
-A `render.yaml` blueprint is included:
+The included `render.yaml` targets Render's **free** plan on purpose:
 
 1. Push this repo to GitHub.
-2. On Render, **New → Blueprint**, point it at the repo.
-3. It provisions the web service from the `Dockerfile` with a 1 GB persistent
-   disk mounted at `/data` (`SHIRT_DATA_DIR`).
+2. On Render's dashboard, **New → Blueprint**, point it at the repo. No CLI,
+   no local machine needed — this works from a phone browser.
+3. It provisions the web service from the `Dockerfile`. No disk is attached,
+   because free web services on Render cannot attach one at all — that is a
+   hard platform rule, not something this blueprint could opt into.
 
-The blueprint uses Render's `starter` plan, which is what supports the
-persistent disk — check Render's current pricing before deploying. Without a
-disk (e.g. on a free instance) the app still runs correctly between requests,
-it just loses uploads/designs/exports whenever the instance restarts or
-redeploys.
+**What that means in practice:** the app itself never crashes — a fresh
+container just re-seeds the shirt catalog and starts with an empty library, the
+same way it does on `npm start` the first time. But a free service spins down
+after about 15 minutes with no traffic, and everything written to disk since
+the last restart — uploaded artwork, custom shirt types, saved designs, past
+exports — is gone when it spins back up. **Export and download anything you
+want to keep** (the mockup PDF, the artwork PDF, the vector sources) before
+you stop using it for a while; those files only really exist once they're on
+your device, not while they're sitting in the app's temporary storage.
+
+This is a real limitation, not a rare edge case — for a personal project used
+in short sessions it will happen most times you come back. If you later want
+the library itself to persist between sessions, the two ways to get that
+without giving any platform a card are non-trivial: move file storage to
+something like Cloudflare R2 and the JSON database to a provider with a real
+permanent free tier, which needs code changes to this app's storage layer,
+not just a config change. Ask if you want that built out.
+
+### If you want it to actually persist: Render's paid plan, or your own host
+
+Render's paid plans support attaching a real persistent disk (see git history
+for a `render.yaml` with a `disk:` block), as does Railway, Fly.io, an Oracle
+Cloud Always Free VM, or your own Docker host.
 
 ### Railway / Fly.io / your own host
 

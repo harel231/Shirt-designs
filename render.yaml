@@ -1,22 +1,28 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
 #
-# One service, built from the Dockerfile at the repo root, with a persistent
-# disk mounted where the server keeps uploads, exports and its database. Without
-# that disk, a Render service still works (unlike Vercel's serverless
-# functions — this is a normal long-running container) but loses everything on
-# a redeploy or restart, which defeats the point of a design library.
+# Free plan: no card, deployable entirely from Render's web dashboard. There is
+# no persistent disk here on purpose — Render's free web services cannot
+# attach one at all (that's a hard platform rule, not a config option). The
+# container still gets a normal writable filesystem for as long as it stays
+# up, which is plenty for one working session; it is reset whenever the
+# service redeploys or spins down after ~15 minutes of no traffic.
+#
+# In practice: uploads, designs and shirt types you add will disappear after
+# an idle period. Download anything you want to keep — the mockup PDF, the
+# artwork PDF, the vector sources — via Export before you stop using it.
+#
+# To stop losing data between sessions, upgrade this service to a paid plan
+# and add a `disk:` block mounted at /data (see git history for the version
+# that had one), or move file storage to something like Cloudflare R2 and the
+# JSON database to a database with a real persistent free tier.
 services:
   - type: web
     name: shirt-designs
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
     envVars:
       - key: SHIRT_DATA_DIR
         value: /data
       - key: PORT
         value: 4000
-    disk:
-      name: shirt-designs-data
-      mountPath: /data
-      sizeGB: 1
